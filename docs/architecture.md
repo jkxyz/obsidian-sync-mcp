@@ -48,7 +48,7 @@ Unexpected restarts are handled as follows:
 
 - Durable Object SQLite retains the encrypted token, selected vault, E2E password, and mutation receipts.
 - `onStart()` passes the decrypted envelope to the new Container over its private token-authenticated service.
-- The Container runs `sync-setup` when needed, pulls the remote vault, checks disk headroom, rebuilds SQLite FTS5, starts the filesystem watcher, and starts continuous Sync.
+- The Container runs `sync-setup` when needed, forces `mirror-remote` mode for a read-only bootstrap pull, then enables bidirectional mode only after that pull succeeds. It next checks disk headroom, rebuilds SQLite FTS5, starts the filesystem watcher, and starts continuous Sync.
 - Vault calls return `not_ready` until this completes or `degraded` status if it fails.
 
 Scale-to-zero is possible by removing the `onActivityExpired()` override. Every wake would then require a complete remote rehydration and index rebuild, giving lower idle cost but potentially substantial first-request latency and more Sync traffic. It is not the default for an efficient always-current vault server.

@@ -2,13 +2,75 @@ import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { VaultOperationError } from "./protocol.js";
 
 type CommandResult = { stdout: string; stderr: string };
 export type RemoteVault = { id?: string; name?: string };
+export type SyncMode = "bidirectional" | "mirror-remote";
+export type SyncStateRows = { data: string }[];
 const HEADLESS_COMMAND = process.env.OBSIDIAN_HEADLESS_COMMAND ?? "ob";
 
-function safeEnvironment(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function summarizeSyncRun(result: CommandResult): {
+  outputLines: number;
+  stderrLines: number;
+  downloaded: number;
+  restored: number;
+  removedLocal: number;
+  deletedRemote: number;
+  fullySynced: number;
+} {
+  const stdout = result.stdout.split(/\r?\n/u).filter(Boolean);
+  const stderr = result.stderr.split(/\r?\n/u).filter(Boolean);
+  const matching = (text: string) =>
+    stdout.filter((line) => line.includes(text)).length;
+  return {
+    outputLines: stdout.length,
+    stderrLines: stderr.length,
+    downloaded: matching("Downloaded "),
+    restored: matching("Restoring "),
+    removedLocal: matching("Removing local-only "),
+    deletedRemote: matching("Deleting remote "),
+    fullySynced: matching("Fully synced"),
+  };
+}
+
+export function summarizeSyncStateRows(rows: SyncStateRows): {
+  entries: number;
+  activeFiles: number;
+  activeFolders: number;
+  deleted: number;
+  unreadable: number;
+} {
+  let activeFiles = 0;
+  let activeFolders = 0;
+  let deleted = 0;
+  let unreadable = 0;
+  for (const row of rows) {
+    try {
+      const state = JSON.parse(row.data) as {
+        deleted?: boolean;
+        folder?: boolean;
+      };
+      if (state.deleted) deleted += 1;
+      else if (state.folder) activeFolders += 1;
+      else activeFiles += 1;
+    } catch {
+      unreadable += 1;
+    }
+  }
+  return {
+    entries: rows.length,
+    activeFiles,
+    activeFolders,
+    deleted,
+    unreadable,
+  };
+}
+
+export function safeEnvironment(
+  overrides: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
   return {
     PATH: process.env.PATH,
     HOME: process.env.HOME,
@@ -18,7 +80,7 @@ function safeEnvironment(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   };
 }
 
-function runCommand(
+export function runCommand(
   command: string,
   args: string[],
   env: NodeJS.ProcessEnv,
@@ -32,9 +94,17 @@ function runCommand(
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let timedOut = false;
+    let forceTimer: NodeJS.Timeout | null = null;
+    const cleanup = () => {
+      clearTimeout(timer);
+      if (forceTimer) clearTimeout(forceTimer);
+    };
     const timer = setTimeout(() => {
+      timedOut = true;
       child.kill("SIGTERM");
-      setTimeout(() => child.kill("SIGKILL"), 5_000).unref();
+      forceTimer = setTimeout(() => child.kill("SIGKILL"), 5_000);
+      forceTimer.unref();
     }, timeoutMs);
     child.stdout.on("data", (chunk: Buffer) => {
       if (stdout.length < 2_000_000) stdout += chunk.toString("utf8");
@@ -45,14 +115,20 @@ function runCommand(
     child.once("error", (error) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      cleanup();
       reject(error);
     });
     child.once("exit", (code, signal) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
-      if (code === 0) resolve({ stdout, stderr });
+      cleanup();
+      if (timedOut)
+        reject(
+          new Error(
+            `${command} timed out after ${timeoutMs}ms${stderr ? `: ${stderr.slice(-1000)}` : ""}`,
+          ),
+        );
+      else if (code === 0) resolve({ stdout, stderr });
       else
         reject(
           new Error(
@@ -92,6 +168,29 @@ export function remoteVaults(value: unknown): RemoteVault[] {
   });
 }
 
+export function syncConfigArgs(
+  vaultRoot: string,
+  deviceName: string,
+  mode: SyncMode,
+): string[] {
+  return [
+    "sync-config",
+    "--path",
+    vaultRoot,
+    "--mode",
+    mode,
+    "--conflict-strategy",
+    "conflict",
+    "--file-types",
+    "image,audio,video,pdf,unsupported",
+    "--configs",
+    "",
+    "--device-name",
+    deviceName,
+    "--json",
+  ];
+}
+
 export class SyncSupervisor {
   private continuous: ChildProcess | null = null;
   private continuousDesired = false;
@@ -100,6 +199,7 @@ export class SyncSupervisor {
   private authToken: string | null = null;
   private lastSyncAt: string | null = null;
   private lastSyncError: string | null = null;
+  private lastSyncSummary: ReturnType<typeof summarizeSyncRun> | null = null;
   private continuousExit: {
     code: number | null;
     signal: NodeJS.Signals | null;
@@ -201,24 +301,17 @@ export class SyncSupervisor {
         120_000,
       );
     }
+    await this.configureMode("mirror-remote");
+  }
+
+  async activateBidirectional(): Promise<void> {
+    await this.configureMode("bidirectional");
+  }
+
+  private async configureMode(mode: SyncMode): Promise<void> {
     await runCommand(
       HEADLESS_COMMAND,
-      [
-        "sync-config",
-        "--path",
-        this.vaultRoot,
-        "--mode",
-        "bidirectional",
-        "--conflict-strategy",
-        "conflict",
-        "--file-types",
-        "image,audio,video,pdf,unsupported",
-        "--configs",
-        "",
-        "--device-name",
-        this.deviceName,
-        "--json",
-      ],
+      syncConfigArgs(this.vaultRoot, this.deviceName, mode),
       this.commandEnvironment(),
       60_000,
     );
@@ -226,12 +319,18 @@ export class SyncSupervisor {
 
   async oneShot(): Promise<void> {
     try {
-      await runCommand(
+      const result = await runCommand(
         HEADLESS_COMMAND,
         ["sync", "--path", this.vaultRoot],
         this.commandEnvironment(),
         300_000,
       );
+      const summary = summarizeSyncRun(result);
+      this.lastSyncSummary = summary;
+      if (summary.fullySynced === 0)
+        throw new Error(
+          "Obsidian Sync exited before reporting that the vault was fully synced",
+        );
       this.lastSyncAt = new Date().toISOString();
       this.lastSyncError = null;
     } catch (error) {
@@ -317,6 +416,7 @@ export class SyncSupervisor {
 
   async status(): Promise<unknown> {
     let cliStatus: unknown = null;
+    let stateDatabase: unknown = { available: false };
     if (this.authToken) {
       try {
         const result = await runCommand(
@@ -326,6 +426,13 @@ export class SyncSupervisor {
           30_000,
         );
         cliStatus = JSON.parse(result.stdout);
+        const vaultId =
+          cliStatus &&
+          typeof cliStatus === "object" &&
+          typeof (cliStatus as { vaultId?: unknown }).vaultId === "string"
+            ? (cliStatus as { vaultId: string }).vaultId
+            : null;
+        if (vaultId) stateDatabase = this.inspectStateDatabase(vaultId);
       } catch (error) {
         cliStatus = {
           error: error instanceof Error ? error.message : "Status failed",
@@ -339,7 +446,62 @@ export class SyncSupervisor {
       continuousExit: this.continuousExit,
       lastSyncAt: this.lastSyncAt,
       lastSyncError: this.lastSyncError,
+      lastSyncSummary: this.lastSyncSummary,
+      stateDatabase,
       cli: cliStatus,
     };
+  }
+
+  private inspectStateDatabase(vaultId: string): unknown {
+    const configHome =
+      process.env.XDG_CONFIG_HOME ??
+      path.join(process.env.HOME ?? "/home/ob", ".config");
+    const databasePath = path.join(
+      configHome,
+      "obsidian-headless",
+      "sync",
+      vaultId,
+      "state.db",
+    );
+    let database: Database.Database | null = null;
+    try {
+      database = new Database(databasePath, {
+        readonly: true,
+        fileMustExist: true,
+      });
+      const server = summarizeSyncStateRows(
+        database
+          .prepare("SELECT data FROM server_files")
+          .all() as SyncStateRows,
+      );
+      const local = summarizeSyncStateRows(
+        database.prepare("SELECT data FROM local_files").all() as SyncStateRows,
+      );
+      const pending = (
+        database.prepare("SELECT COUNT(*) count FROM pending_files").get() as {
+          count: number;
+        }
+      ).count;
+      const meta = Object.fromEntries(
+        (
+          database.prepare("SELECT key, value FROM meta").all() as {
+            key: string;
+            value: string;
+          }[]
+        ).map((row) => [row.key, row.value]),
+      );
+      return {
+        available: true,
+        server,
+        local,
+        pending,
+        initial: meta.initial !== "false",
+        version: Number(meta.version ?? "0"),
+      };
+    } catch {
+      return { available: false };
+    } finally {
+      database?.close();
+    }
   }
 }

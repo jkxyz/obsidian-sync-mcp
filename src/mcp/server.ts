@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/server";
+import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { createMcpHandler } from "agents/mcp/server";
 import { z } from "zod";
 import type { AppEnv } from "../env.js";
@@ -29,6 +30,22 @@ const pageLimit = z
   .max(MAX_PAGE_SIZE)
   .default(DEFAULT_PAGE_SIZE);
 const scalar = z.union([z.string(), z.number(), z.boolean()]);
+
+type TokenScopeReader = {
+  unwrapToken(token: string): Promise<{ scope: string[] } | null>;
+};
+
+export async function effectiveScopesForRequest(
+  request: Request,
+  oauth: TokenScopeReader,
+): Promise<string[]> {
+  const authorization = request.headers.get("authorization");
+  if (!authorization?.startsWith("Bearer ")) return [];
+  const accessToken = authorization.slice("Bearer ".length);
+  if (!accessToken) return [];
+  const token = await oauth.unwrapToken(accessToken);
+  return token ? [...token.scope] : [];
+}
 
 const patch = z.discriminatedUnion("type", [
   z.object({
@@ -285,12 +302,21 @@ export const mcpApiHandler = {
     env: AppEnv,
     ctx: ExecutionContext,
   ): Promise<Response> {
+    const oauth = (
+      env as AppEnv & {
+        OAUTH_PROVIDER: OAuthHelpers;
+      }
+    ).OAUTH_PROVIDER;
     const allowedHostnames = env.MCP_ALLOWED_HOSTNAMES.split(",")
       .map((value) => value.trim())
       .filter(Boolean);
     const handler = createMcpHandler(
-      (requestContext) =>
-        createServer(env, requestContext.authInfo?.scopes ?? []),
+      async (requestContext) =>
+        createServer(
+          env,
+          requestContext.authInfo?.scopes ??
+            (await effectiveScopesForRequest(request, oauth)),
+        ),
       {
         route: "/mcp",
         ...(allowedHostnames.length > 0

@@ -161,6 +161,7 @@ export class VaultService {
       await this.indexer.stopWatching();
       await this.sync.configure(input);
       await this.sync.oneShot();
+      await this.sync.activateBidirectional();
       await this.assertDiskHeadroom();
       await this.indexer.rebuild();
       this.indexer.startWatching();
@@ -203,6 +204,7 @@ export class VaultService {
       stateError: this.stateError,
       queueDepth: this.queueDepth,
       counts: this.indexer.counts(),
+      filesystemCounts: await this.indexer.filesystemCounts(),
       sync: await this.sync.status(),
       headlessVersion: "0.0.14",
     };

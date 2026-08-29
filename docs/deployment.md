@@ -61,7 +61,7 @@ Open `https://YOUR_WORKER_HOST/admin`. After the Cloudflare Access login:
 
 1. Enter the Obsidian account email, password, and MFA code if required. The password and MFA code are used only by a transient `ob login` process and are not persisted.
 2. Select a returned remote vault and provide its E2E password when applicable.
-3. Wait for initial Sync and indexing to complete. `lite` has only 2 GB disk; a headroom failure means you should redeploy with at least `basic`.
+3. Wait for the read-only bootstrap Sync and indexing to complete. The Container mirrors the remote vault before enabling bidirectional Sync so an empty ephemeral disk cannot be interpreted as remote deletions. `lite` has only 2 GB disk; a headroom failure means you should redeploy with at least `basic`.
 4. Confirm `/admin` reports the configured vault and a ready runtime.
 
 The stored envelope contains the Obsidian auth token, selected vault, and optional E2E password because fresh Container disks must be able to rehydrate without an interactive login.

@@ -49,8 +49,9 @@ export class VaultContainer extends Container<AppEnv> {
   override defaultPort = 8080;
   override requiredPorts = [8080];
   override sleepAfter = "1h";
-  override enableInternet = false;
-  override allowedHosts = ["api.obsidian.md", "*.obsidian.md"];
+  // Obsidian Sync uses a native WSS connection. Cloudflare's HTTPS outbound
+  // interception is HTTP-level and cannot transparently carry that protocol.
+  override enableInternet = true;
   override pingEndpoint = "localhost/health";
   private queueTail: Promise<void> = Promise.resolve();
 

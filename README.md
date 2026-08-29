@@ -22,7 +22,7 @@ flowchart LR
   W -->|RPC to primary-vault| D[Durable Object]
   D -->|serialized internal HTTP| X[Cloudflare Container]
   X --> I[(SQLite FTS5 index)]
-  X <-->|allowlisted TLS and WebSocket| O[Obsidian Sync]
+  X <-->|native TLS and WebSocket| O[Obsidian Sync]
   D --> S[(DO SQLite: encrypted credential envelope and idempotency)]
 ```
 

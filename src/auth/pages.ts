@@ -22,7 +22,7 @@ function page(title: string, body: string): Response {
         "content-security-policy":
           "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
         "x-content-type-options": "nosniff",
-        "referrer-policy": "no-referrer",
+        "referrer-policy": "same-origin",
         "permissions-policy": "camera=(), microphone=(), geolocation=()",
       },
     },

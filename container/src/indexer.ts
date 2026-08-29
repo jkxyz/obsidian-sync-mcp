@@ -433,6 +433,18 @@ export class VaultIndexer {
     while (this.pending.size > 0) await Promise.allSettled([...this.pending]);
   }
 
+  async filesystemCounts(): Promise<{
+    files: number;
+    notes: number;
+    attachments: number;
+  }> {
+    const files = await this.walk(this.vaultRoot);
+    const notes = files.filter(
+      (file) => path.extname(file).toLocaleLowerCase("en-US") === ".md",
+    ).length;
+    return { files: files.length, notes, attachments: files.length - notes };
+  }
+
   file(relative: string): IndexedFileRow | null {
     return (
       (this.db.prepare("SELECT * FROM files WHERE path = ?").get(relative) as

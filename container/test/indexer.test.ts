@@ -50,6 +50,11 @@ describe("vault index", () => {
     const { indexer } = await fixture();
     try {
       expect(indexer.counts()).toEqual({ files: 3, notes: 2, attachments: 1 });
+      await expect(indexer.filesystemCounts()).resolves.toEqual({
+        files: 3,
+        notes: 2,
+        attachments: 1,
+      });
       const result = indexer.search({
         query: "searchable phrase",
         tags: ["project"],
