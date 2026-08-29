@@ -3,7 +3,7 @@
 ## Security boundaries
 
 - Cloudflare Access policy decides which people may reach the consent and admin flows. The MCP OAuth server separately issues `vault.read` and `vault.write` grants.
-- OAuth authorization state is signed and stored as a one-time, ten-minute KV record. The upstream Access flow uses authorization code plus PKCE, and Access ID tokens are verified against the configured JWKS, audience, and issuer origin.
+- OAuth authorization state is signed and AES-GCM encrypted in a ten-minute KV record, then atomically claimed once in Durable Object SQLite before use. The upstream Access and GitHub flows use authorization code plus PKCE; Access ID tokens are verified against the configured JWKS, audience, and issuer origin.
 - Admin sessions are encrypted, `HttpOnly`, `Secure`, `SameSite=Lax` cookies with double-submit CSRF checks and same-origin POST enforcement.
 - Obsidian tokens and optional E2E passwords are AES-GCM encrypted before entering Durable Object SQLite. Account passwords and MFA codes are used in a transient login directory and are never persisted.
 - The Container's internal HTTP service requires an independent bearer token, returns a generic 404 on unauthenticated calls, and is reached only through its managing DO.
@@ -24,6 +24,24 @@ This service intentionally permits an authorized `vault.write` client to hard-de
 
 The Durable Object records the complete response for each mutation UUID. A repeated identical request returns that response even if continuous Sync later converges. This prevents an ambiguous retry from applying a write twice.
 
+`git_state` is independent from `sync_state`. A successful Obsidian mutation remains successful when Git is pending. When a local mutation exists but its Obsidian push is pending, the server attempts an emergency Git commit so the data has a second durable copy without claiming full convergence.
+
+## Destructive-change quarantine
+
+Before a live one-shot, the Container refreshes a separate `mirror-remote` vault, checkpoints the complete live tree, and compares the mirror with the last accepted remote snapshot. After the one-shot it compares the live result with both the checkpoint and the predicted remote delta. Reconciliation performs the same checks before and after applying its candidate.
+
+The server quarantines when a nonempty vault would become empty, at least half of tracked paths or one quarter of tracked bytes would be deleted, at least 20 paths and 10% of paths would be deleted, or Headless reports an unplanned remote deletion. The exact path list is kept in a protected admin manifest; logs and ordinary status retain only counts, hashes, and a capped preview.
+
+While quarantined:
+
+- Continuous Sync and all Git triggers remain stopped, including after restart.
+- MCP reads continue from the restored checkpoint and existing index.
+- MCP mutations return `not_ready`.
+- The Git base is unchanged and no destructive content commit is pushed.
+- `/admin` offers one-time approve/reject actions bound to the event ID and exact Git, remote, safe-tree, and candidate digests. Any change makes the approval stale.
+
+Approval applies only the reviewed candidate and leaves Git in manual-only mode. Rejection archives the live Headless state, republishes the preserved tree, verifies it through the read-only mirror, and only then resumes service. If Git or Obsidian changed while the review was open, use **Refresh this preview** to obtain a new event ID; the stale action is never reused. After approval, run two manual no-op reconciliations before explicitly enabling the schedule. Large renames may require approval because file-level reconciliation represents them as delete/add batches.
+
 ## Backup and recovery
 
 Obsidian Sync is synchronization, not the only backup. Keep an independent versioned backup of the vault and test restoration. In particular, a remote client can race the short pull-to-push interval because Obsidian Headless exposes no global transactional lock.
@@ -35,24 +53,27 @@ Recovery paths:
 - `degraded` after bootstrap: inspect Container/Worker logs, verify vault size and E2E password, then use `/admin` reset and bootstrap again if needed.
 - Lost or rotated credential key: reset and re-enter Obsidian credentials. The old encrypted envelope cannot be recovered without the old key.
 - Obsidian token revocation: reset, log in again, and review active sessions in the Obsidian account.
-- Full reset: `/admin` requires the literal `RESET`; it removes local Container configuration and the DO credential/idempotency tables but does not delete the remote vault or guarantee remote token revocation.
+- Full reset: `/admin` requires the literal `RESET`; it removes local Container configuration plus the DO credential, idempotency, and Git pairing records, but does not delete either remote or uninstall/revoke the GitHub App.
+- Historical Git recovery: enter an ancestor commit in `/admin` to preview a safe union. Missing historical paths are restored, current-only paths and surviving current versions are retained, and current `.github/workflows/**` remains untouched. Approval creates a normal commit descending from the latest branch head; force-push is never used.
 
 Logs intentionally record operation paths and error messages but not request bodies, tokens, passwords, attachment data, or note contents. Treat paths and remote error strings as potentially sensitive and set an appropriate log retention policy.
 
 ## Cost and sizing
 
-The current design keeps one `lite` Container active. At the published [Container pricing](https://developers.cloudflare.com/containers/pricing/), a 730-hour month provisions 182.5 GiB-hours of memory and 1,460 GB-hours of disk. After the Workers Paid included allotments, that is approximately $1.74 in memory and disk overage, plus the $5 Workers Paid base plan, actual CPU, network beyond the regional allowance, Worker/DO use, and logs. If the 1/16-vCPU `lite` instance consumed its maximum CPU continuously, the additional CPU overage would be roughly $2.84; idle continuous Sync should use less, but measure the deployed workload rather than budgeting from that assumption.
+The current design keeps one `basic` Container active. Consult the current [Container pricing](https://developers.cloudflare.com/containers/pricing/) for the resulting memory, disk, CPU, network, Worker, Durable Object, and log charges; they change independently of this repository.
 
-Cloudflare currently gives `lite` 256 MiB memory and 2 GB disk and `basic` 1 GiB memory and 4 GB disk. The runtime performs a post-sync headroom check, but the initial pull itself can exhaust a too-small disk. Choose `basic` before bootstrap for a large vault, a high attachment count, or uncertain SQLite/index growth.
+The runtime requires the `basic` tier and refuses reconciliation unless the live vault has staging headroom of at least 512 MiB and 120% of its current size. The initial Obsidian pull and Git/LFS fetch occur before that check, so size the deployment conservatively and monitor disk use for attachment-heavy vaults.
 
 ## Production checklist
 
 - Restrict the Access SaaS application to named users/groups and require the desired MFA/device posture.
-- Set a nonempty `MCP_ALLOWED_HOSTNAMES` Worker secret.
+- Set a nonempty `MCP_ALLOWED_HOSTNAMES` Worker variable.
 - Use three independent high-entropy application secrets and retain them in a managed secret store.
 - Test official Headless 0.0.14 with a disposable vault matching the production encryption and sharing configuration.
 - Exercise concurrent edits from desktop and MCP and decide on an operational conflict policy.
 - Verify independent backups and deletion recovery.
 - Set Cloudflare budget alerts and log retention.
-- Monitor `vault_status` for `degraded`, `sync_pending`, continuous exits, queue growth, and unexpected file-count changes.
+- Monitor `vault_status` for `degraded`, `sync_pending`, `destructive_change`, continuous exits, queue growth, and unexpected file-count changes.
+- Monitor Git status for paused/quarantined mode, pending retries, LFS failures, conflicts, and `history_rewritten`. The server never force-pushes and requires an administrator to approve initial candidates and resolve rewritten history.
+- Treat the Git repository as sensitive plaintext. Obsidian Sync end-to-end encryption does not extend to GitHub, and `.obsidian` plugin data may contain secrets.
 - Re-run the full image build, tests, and bootstrap smoke test before changing the pinned Headless package.
