@@ -48,7 +48,7 @@ Cloudflare currently gives `lite` 256 MiB memory and 2 GB disk and `basic` 1 GiB
 ## Production checklist
 
 - Restrict the Access SaaS application to named users/groups and require the desired MFA/device posture.
-- Set a nonempty `MCP_ALLOWED_HOSTNAMES`.
+- Set a nonempty `MCP_ALLOWED_HOSTNAMES` Worker secret.
 - Use three independent high-entropy application secrets and retain them in a managed secret store.
 - Test official Headless 0.0.14 with a disposable vault matching the production encryption and sharing configuration.
 - Exercise concurrent edits from desktop and MCP and decide on an operational conflict policy.

@@ -1,62 +1,67 @@
 {
-	"$schema": "./node_modules/wrangler/config-schema.json",
-	"name": "obsidian-sync-mcp",
-	"main": "src/index.ts",
-	"compatibility_date": "2026-08-28",
-	"compatibility_flags": [
-		"nodejs_compat",
-		"global_fetch_strictly_public"
-	],
-	"containers": [
-		{
-			"class_name": "VaultContainer",
-			"image": "./container/Dockerfile",
-			"image_build_context": ".",
-			"instance_type": "lite",
-			"max_instances": 1,
-		},
-	],
-	"durable_objects": {
-		"bindings": [
-			{
-				"name": "VAULT_CONTAINER",
-				"class_name": "VaultContainer",
-			},
-		],
-	},
-	"migrations": [
-		{
-			"tag": "v1",
-			"new_sqlite_classes": [
-				"VaultContainer"
-			],
-		},
-	],
-	"kv_namespaces": [
-		{
-			"binding": "OAUTH_KV",
-			"id": "3eda65136e374a2e9d644a566c13a267",
-		},
-	],
-	"vars": {
-		"MCP_ALLOWED_HOSTNAMES": "obsidian-sync-mcp.obsidian-sync-mcp.workers.dev",
-		"DEVICE_NAME": "Cloudflare Obsidian MCP",
-	},
-	"triggers": {
-		"crons": [
-			"17 3 * * *"
-		],
-	},
-	"observability": {
-		"enabled": true,
-		"logs": {
-			"enabled": true,
-			"invocation_logs": true,
-			"head_sampling_rate": 1,
-		},
-		"traces": {
-			"enabled": true,
-			"head_sampling_rate": 0.05,
-		},
-	},
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "obsidian-sync-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-28",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "containers": [
+    {
+      "class_name": "VaultContainer",
+      "image": "./container/Dockerfile",
+      "image_build_context": ".",
+      "instance_type": "lite",
+      "max_instances": 1,
+    },
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "VAULT_CONTAINER",
+        "class_name": "VaultContainer",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["VaultContainer"],
+    },
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "3eda65136e374a2e9d644a566c13a267",
+    },
+  ],
+  "vars": {
+    "DEVICE_NAME": "Cloudflare Obsidian MCP",
+  },
+  "secrets": {
+    "required": [
+      "MCP_ALLOWED_HOSTNAMES",
+      "ACCESS_CLIENT_ID",
+      "ACCESS_CLIENT_SECRET",
+      "ACCESS_AUTHORIZATION_URL",
+      "ACCESS_TOKEN_URL",
+      "ACCESS_JWKS_URL",
+      "COOKIE_ENCRYPTION_KEY",
+      "CREDENTIAL_ENCRYPTION_KEY",
+      "INTERNAL_CONTAINER_TOKEN",
+    ],
+  },
+  "triggers": {
+    "crons": ["17 3 * * *"],
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true,
+      "head_sampling_rate": 1,
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.05,
+    },
+  },
 }

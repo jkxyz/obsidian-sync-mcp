@@ -24,22 +24,25 @@ Copy the application's Client ID, Client secret, Authorization endpoint, Token e
 
 ## 2. Set configuration and secrets
 
-Set `MCP_ALLOWED_HOSTNAMES` in `wrangler.jsonc` to the exact public Worker host. Multiple hosts are comma-separated. Leaving it empty is useful for initial local development, but is not recommended in production.
-
 Create these Worker secrets with `wrangler secret put NAME`:
 
-| Secret                      | Value                                                  |
-| --------------------------- | ------------------------------------------------------ |
-| `ACCESS_CLIENT_ID`          | Access SaaS Client ID                                  |
-| `ACCESS_CLIENT_SECRET`      | Access SaaS Client secret                              |
-| `ACCESS_AUTHORIZATION_URL`  | Access Authorization endpoint                          |
-| `ACCESS_TOKEN_URL`          | Access Token endpoint                                  |
-| `ACCESS_JWKS_URL`           | Access Key endpoint                                    |
-| `COOKIE_ENCRYPTION_KEY`     | Independent random secret, at least 32 bytes           |
-| `CREDENTIAL_ENCRYPTION_KEY` | Different independent random secret, at least 32 bytes |
-| `INTERNAL_CONTAINER_TOKEN`  | Third independent random secret, at least 32 bytes     |
+| Secret                      | Value                                                    |
+| --------------------------- | -------------------------------------------------------- |
+| `MCP_ALLOWED_HOSTNAMES`     | Exact public Worker host; multiple hosts comma-separated |
+| `ACCESS_CLIENT_ID`          | Access SaaS Client ID                                    |
+| `ACCESS_CLIENT_SECRET`      | Access SaaS Client secret                                |
+| `ACCESS_AUTHORIZATION_URL`  | Access Authorization endpoint                            |
+| `ACCESS_TOKEN_URL`          | Access Token endpoint                                    |
+| `ACCESS_JWKS_URL`           | Access Key endpoint                                      |
+| `COOKIE_ENCRYPTION_KEY`     | Independent random secret, at least 32 bytes             |
+| `CREDENTIAL_ENCRYPTION_KEY` | Different independent random secret, at least 32 bytes   |
+| `INTERNAL_CONTAINER_TOKEN`  | Third independent random secret, at least 32 bytes       |
 
-Generate secrets with a trusted password manager or cryptographic random generator. Do not put production values in `.dev.vars`, shell history, the repository, or command arguments. `.dev.vars.example` contains only placeholders.
+`MCP_ALLOWED_HOSTNAMES` is deployment-specific configuration rather than confidential data, but storing it as a Worker secret keeps the hostname out of the repository. Do not leave it empty in production.
+
+For local development, copy `.dev.vars.example` to `.dev.vars` and replace every placeholder. Wrangler reads this ignored file during `wrangler dev` but does not deploy it. Keep production credentials in a managed secret store and enter them with `wrangler secret put`; do not put them in `.dev.vars`, shell history, the repository, or command arguments. To load secrets from a protected file without placing each value in shell history, use `wrangler secret bulk PATH_TO_ENV_FILE`.
+
+Generate the three application secrets with a trusted password manager or cryptographic random generator. `.dev.vars.example` contains only placeholders.
 
 Changing `CREDENTIAL_ENCRYPTION_KEY` makes the stored Obsidian envelope unreadable. Reset the integration and bootstrap it again as part of an intentional rotation. Changing `COOKIE_ENCRYPTION_KEY` invalidates admin sessions and pending OIDC state. Changing `INTERNAL_CONTAINER_TOKEN` requires a Container restart before Worker and Container agree on the new value.
 

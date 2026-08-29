@@ -51,8 +51,8 @@ Every mutation requires a fresh UUID `request_id`. Results that may include a lo
 Read [deployment](docs/deployment.md) before deploying. In short:
 
 1. Create a Cloudflare Access generic OIDC SaaS application with callback URLs `https://YOUR_WORKER/callback` and `https://YOUR_WORKER/admin/callback`, then restrict it with an Access Allow policy.
-2. Store the five Access values and three independent random application keys as Wrangler secrets.
-3. Set `MCP_ALLOWED_HOSTNAMES` to the production Worker hostname in `wrangler.jsonc`.
+2. Store the five Access values, three independent random application keys, and `MCP_ALLOWED_HOSTNAMES` as Wrangler secrets.
+3. For local development, copy `.dev.vars.example` to the ignored `.dev.vars` and replace its placeholders.
 4. Run `npm run check`, then `npm run deploy` from an environment with a Docker-compatible CLI and daemon.
 5. Open `/admin`, sign in through Access, authenticate to Obsidian, and select the one remote vault.
 

@@ -1,8 +1,10 @@
-ACCESS_AUTHORIZATION_URL=https://your-team.cloudflareaccess.com/cdn-cgi/access/sso/oidc/CLIENT_ID/authorization
-ACCESS_CLIENT_ID=replace-me
-ACCESS_CLIENT_SECRET=replace-me
-ACCESS_JWKS_URL=https://your-team.cloudflareaccess.com/cdn-cgi/access/sso/oidc/CLIENT_ID/jwks
-ACCESS_TOKEN_URL=https://your-team.cloudflareaccess.com/cdn-cgi/access/sso/oidc/CLIENT_ID/token
-COOKIE_ENCRYPTION_KEY=replace-with-a-random-32-byte-or-longer-secret
-CREDENTIAL_ENCRYPTION_KEY=replace-with-a-different-random-32-byte-or-longer-secret
-INTERNAL_CONTAINER_TOKEN=replace-with-a-third-random-32-byte-or-longer-secret
+# Copy this file to .dev.vars for local development and replace every value.
+MCP_ALLOWED_HOSTNAMES="YOUR_WORKER_HOST"
+ACCESS_CLIENT_ID="YOUR_ACCESS_CLIENT_ID"
+ACCESS_CLIENT_SECRET="YOUR_ACCESS_CLIENT_SECRET"
+ACCESS_AUTHORIZATION_URL="https://YOUR_TEAM.cloudflareaccess.com/cdn-cgi/access/sso/oidc/YOUR_APP_ID/authorization"
+ACCESS_TOKEN_URL="https://YOUR_TEAM.cloudflareaccess.com/cdn-cgi/access/sso/oidc/YOUR_APP_ID/token"
+ACCESS_JWKS_URL="https://YOUR_TEAM.cloudflareaccess.com/cdn-cgi/access/sso/oidc/YOUR_APP_ID/jwks"
+COOKIE_ENCRYPTION_KEY="GENERATE_AN_INDEPENDENT_RANDOM_SECRET"
+CREDENTIAL_ENCRYPTION_KEY="GENERATE_A_DIFFERENT_RANDOM_SECRET"
+INTERNAL_CONTAINER_TOKEN="GENERATE_A_THIRD_RANDOM_SECRET"
