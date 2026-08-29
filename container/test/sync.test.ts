@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   remoteVaults,
+  observeSyncRun,
+  isSyncEligiblePath,
   runCommand,
   safeEnvironment,
   summarizeSyncRun,
@@ -40,6 +42,9 @@ describe("Obsidian Headless bootstrap configuration", () => {
 
     expect(args).toContain("mirror-remote");
     expect(args).not.toContain("bidirectional");
+    expect(args).toContain(
+      "app,appearance,appearance-data,hotkey,core-plugin,core-plugin-data,community-plugin,community-plugin-data",
+    );
   });
 
   it("can enable bidirectional sync after bootstrap", () => {
@@ -51,6 +56,18 @@ describe("Obsidian Headless bootstrap configuration", () => {
 
     expect(args).toContain("bidirectional");
     expect(args).not.toContain("mirror-remote");
+  });
+
+  it("models the explicitly enabled Sync subset without Git-only dotfiles", () => {
+    expect(isSyncEligiblePath("Notes/Paper.md")).toBe(true);
+    expect(isSyncEligiblePath(".agents/skills/stash/SKILL.md")).toBe(false);
+    expect(isSyncEligiblePath(".obsidian/app.json")).toBe(true);
+    expect(isSyncEligiblePath(".obsidian/workspace.json")).toBe(false);
+    expect(isSyncEligiblePath(".obsidian/plugins/example/main.js")).toBe(true);
+    expect(isSyncEligiblePath(".obsidian/plugins/example/extra.js")).toBe(
+      false,
+    );
+    expect(isSyncEligiblePath(".obsidian/themes/example/theme.css")).toBe(true);
   });
 });
 
@@ -64,6 +81,19 @@ describe("Obsidian Headless diagnostics", () => {
 
     expect(summary).toMatchObject({ downloaded: 1, fullySynced: 1 });
     expect(JSON.stringify(summary)).not.toContain("Secret.md");
+  });
+
+  it("retains deletion paths only in the transient safety observation", () => {
+    const observation = observeSyncRun({
+      stdout:
+        "Deleting remote file Planned.md\nDeleting Lost.md\nRemoving local-only file Orphan.md\nFully synced\n",
+      stderr: "",
+    });
+
+    expect(observation.deletedRemotePaths).toEqual(["Planned.md"]);
+    expect(observation.deletedLocalPaths).toEqual(["Lost.md"]);
+    expect(observation.removedLocalPaths).toEqual(["Orphan.md"]);
+    expect(JSON.stringify(observation.summary)).not.toContain("Planned.md");
   });
 
   it("counts active and deleted state rows without retaining paths", () => {

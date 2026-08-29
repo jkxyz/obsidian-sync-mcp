@@ -21,4 +21,16 @@ describe("vault protocol", () => {
     ];
     expect(operations.map(isMutation)).toEqual([false, false, true, true]);
   });
+
+  it("keeps Git convergence independent from Obsidian Sync state", () => {
+    const response = {
+      ok: true as const,
+      data: {},
+      sync_state: "synced_remote" as const,
+      git_state: "pending" as const,
+    };
+
+    expect(response.sync_state).toBe("synced_remote");
+    expect(response.git_state).toBe("pending");
+  });
 });

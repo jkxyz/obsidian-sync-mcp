@@ -3,6 +3,8 @@ export const DEFAULT_PAGE_SIZE = 20;
 export const MAX_PAGE_SIZE = 50;
 
 export type FileKind = "note" | "attachment";
+export type GitState =
+  "converged" | "pending" | "not_configured" | "not_applicable";
 export type VaultErrorCode =
   | "already_exists"
   | "internal_error"
@@ -32,6 +34,7 @@ export type VaultResponse<T = unknown> =
       ok: true;
       data: T;
       sync_state?: "synced_remote" | "sync_pending" | "not_applicable";
+      git_state?: GitState;
     }
   | {
       ok: false;
@@ -42,7 +45,82 @@ export type VaultResponse<T = unknown> =
       };
       data?: T;
       sync_state?: "synced_remote" | "sync_pending" | "not_applicable";
+      git_state?: GitState;
     };
+
+export type GitConflict = {
+  path: string;
+  base_oid: string | null;
+  git_oid: string | null;
+  obsidian_oid: string | null;
+  resolution: "obsidian";
+};
+
+export type GitSafetyPhase =
+  "preflight" | "remote_mirror" | "live_pull" | "post_apply_sync" | "restore";
+
+export type GitSafetyEvent = {
+  event_id: string;
+  phase: GitSafetyPhase;
+  created_at: string;
+  safe_tree: string;
+  candidate_tree: string;
+  remote_head?: string;
+  remote_version?: number;
+  remote_digest?: string;
+  previous_files: number;
+  candidate_files: number;
+  deleted_files: number;
+  previous_bytes: number;
+  deleted_bytes: number;
+  reasons: string[];
+  paths: string[];
+  path_count: number;
+  sync?: {
+    downloaded: number;
+    restored: number;
+    removed_local: number;
+    deleted_remote: number;
+    deleted_local: number;
+  };
+  restore_commit?: string;
+};
+
+export type GitReconcileInput = {
+  token: string;
+  repository: string;
+  branch: string;
+  base_commit?: string;
+  trigger: "startup" | "scheduled" | "mutation" | "manual";
+  request_id?: string;
+  emergency?: boolean;
+  resolution?: "adopt_remote" | "reconnect_base";
+  action?: "apply" | "preview" | "approve" | "reject";
+  safety_event?: GitSafetyEvent;
+  restore_commit?: string;
+  sync_barrier_complete?: boolean;
+};
+
+export type GitReconcileResult = {
+  state: "converged" | "pending" | "blocked";
+  base_commit?: string;
+  remote_head?: string;
+  backup_commit?: string;
+  transaction_id?: string;
+  retries: number;
+  conflict_count: number;
+  conflicts: GitConflict[];
+  unsupported_workflow_count: number;
+  unsupported_workflow_paths: string[];
+  blocked_reason?:
+    | "history_rewritten"
+    | "branch_deleted"
+    | "destructive_change"
+    | "preflight_required";
+  safety_event?: GitSafetyEvent;
+  error?: string;
+  lfs: { available: boolean; healthy: boolean; error?: string };
+};
 
 export type PatchOperation =
   | {

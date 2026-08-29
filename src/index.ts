@@ -42,10 +42,15 @@ export default {
     return oauthProvider.fetch(request, env, ctx);
   },
   async scheduled(
-    _controller: ScheduledController,
+    controller: ScheduledController,
     env: AppEnv,
     ctx: ExecutionContext,
   ): Promise<void> {
-    ctx.waitUntil(oauthProvider.purgeExpiredData(env).then(() => undefined));
+    if (controller.cron === "17 3 * * *")
+      ctx.waitUntil(oauthProvider.purgeExpiredData(env).then(() => undefined));
+    if (controller.cron === "* * * * *") {
+      const stub = env.VAULT_CONTAINER.getByName("primary-vault");
+      ctx.waitUntil(stub.scheduledReconcile());
+    }
   },
 } satisfies ExportedHandler<AppEnv>;

@@ -4,6 +4,69 @@ export const MAX_PAGE_SIZE = 50;
 
 export type FileKind = "note" | "attachment";
 export type SyncState = "synced_remote" | "sync_pending" | "not_applicable";
+export type GitState =
+  "converged" | "pending" | "not_configured" | "not_applicable";
+
+export type GitConflict = {
+  path: string;
+  base_oid: string | null;
+  git_oid: string | null;
+  obsidian_oid: string | null;
+  resolution: "obsidian";
+};
+
+export type GitSafetyPhase =
+  "preflight" | "remote_mirror" | "live_pull" | "post_apply_sync" | "restore";
+
+export type GitSafetyEvent = {
+  event_id: string;
+  phase: GitSafetyPhase;
+  created_at: string;
+  safe_tree: string;
+  candidate_tree: string;
+  remote_head?: string;
+  remote_version?: number;
+  remote_digest?: string;
+  previous_files: number;
+  candidate_files: number;
+  deleted_files: number;
+  previous_bytes: number;
+  deleted_bytes: number;
+  reasons: string[];
+  paths: string[];
+  path_count: number;
+  sync?: {
+    downloaded: number;
+    restored: number;
+    removed_local: number;
+    deleted_remote: number;
+    deleted_local: number;
+  };
+  restore_commit?: string;
+};
+
+export type GitReconcileResult = {
+  state: "converged" | "pending" | "blocked";
+  base_commit?: string;
+  remote_head?: string;
+  backup_commit?: string;
+  transaction_id?: string;
+  retries: number;
+  conflict_count: number;
+  conflicts: GitConflict[];
+  unsupported_workflow_count: number;
+  unsupported_workflow_paths: string[];
+  attempted_at?: string;
+  succeeded_at?: string;
+  blocked_reason?:
+    | "history_rewritten"
+    | "branch_deleted"
+    | "destructive_change"
+    | "preflight_required";
+  safety_event?: GitSafetyEvent;
+  error?: string;
+  lfs: { available: boolean; healthy: boolean; error?: string };
+};
 
 export type VaultErrorCode =
   | "already_exists"
@@ -25,8 +88,14 @@ export type VaultError = {
 };
 
 export type VaultResponse<T = unknown> =
-  | { ok: true; data: T; sync_state?: SyncState }
-  | { ok: false; error: VaultError; data?: T; sync_state?: SyncState };
+  | { ok: true; data: T; sync_state?: SyncState; git_state?: GitState }
+  | {
+      ok: false;
+      error: VaultError;
+      data?: T;
+      sync_state?: SyncState;
+      git_state?: GitState;
+    };
 
 export type PatchOperation =
   | {

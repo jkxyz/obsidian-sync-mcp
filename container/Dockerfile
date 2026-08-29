@@ -10,6 +10,10 @@ RUN npm run build --workspace @obsidian-sync-mcp/container
 
 FROM node:22.19.0-bookworm-slim AS runtime
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates git git-lfs \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV NODE_ENV=production \
     HOME=/home/ob \
     XDG_CONFIG_HOME=/data/config \

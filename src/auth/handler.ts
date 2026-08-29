@@ -5,7 +5,14 @@ import type {
 import type { AppEnv, AuthProps } from "../env.js";
 import type { AdminStatus } from "../vault-container.js";
 import type { VaultResponse } from "../shared/protocol.js";
-import { adminPage, approvalPage, errorPage, homePage } from "./pages.js";
+import {
+  adminPage,
+  approvalPage,
+  errorPage,
+  githubBranchPage,
+  githubRepositoryPage,
+  homePage,
+} from "./pages.js";
 import {
   constantTimeEqual,
   cookieValue,
@@ -19,6 +26,13 @@ import {
   storeFlow,
   takeFlow,
 } from "./oidc.js";
+import {
+  exchangeGitHubCode,
+  githubAuthorizeRedirect,
+  listGitHubBranches,
+  listGitHubRepositories,
+  missingGitHubBindings,
+} from "../github.js";
 
 const SESSION_COOKIE = "__Host-OBSIDIAN_ADMIN";
 const CSRF_COOKIE = "__Host-OBSIDIAN_CSRF";
@@ -110,6 +124,7 @@ async function renderAdmin(
 ): Promise<Response> {
   const stub = env.VAULT_CONTAINER.getByName("primary-vault");
   const status = (await stub.adminStatus()) as AdminStatus;
+  const missingGitHub = missingGitHubBindings(env);
   const response = adminPage({
     email: session.email,
     csrf: session.csrf,
@@ -117,10 +132,61 @@ async function renderAdmin(
     ...(status.vault ? { vault: status.vault } : {}),
     ...(status.remoteVaults ? { remoteVaults: status.remoteVaults } : {}),
     status,
+    ...(status.git ? { git: status.git } : {}),
+    ...(missingGitHub.length > 0
+      ? {
+          githubConfigurationError: `GitHub integration is missing Worker bindings: ${missingGitHub.join(", ")}. Configure them and deploy again.`,
+        }
+      : {}),
     ...(message ? { message } : {}),
     ...(error ? { error } : {}),
   });
   return withCookie(response, secureCookie(CSRF_COOKIE, session.csrf, 28_800));
+}
+
+async function handleGitHubCallback(
+  request: Request,
+  env: AppEnv,
+): Promise<Response> {
+  const session = await adminSession(request, env);
+  if (!session)
+    return Response.redirect(new URL("/admin/login", request.url), 302);
+  const flow = await takeFlow(
+    env,
+    new URL(request.url).searchParams.get("state") ?? "",
+  );
+  if (!flow || flow.kind !== "github-oauth" || flow.adminSub !== session.sub)
+    return errorPage("GitHub authorization state expired");
+  try {
+    const userToken = await exchangeGitHubCode(request, env, flow.verifier);
+    const repositories = await listGitHubRepositories(userToken);
+    const selectionState = await storeFlow(env, {
+      kind: "github-repository-selection",
+      adminSub: session.sub,
+      accessToken: userToken,
+      repositories,
+    });
+    return withCookie(
+      githubRepositoryPage({
+        email: session.email,
+        csrf: session.csrf,
+        state: selectionState,
+        repositories,
+        installUrl: `https://github.com/apps/${encodeURIComponent(env.GITHUB_APP_SLUG)}/installations/new`,
+      }),
+      secureCookie(CSRF_COOKIE, session.csrf, 28_800),
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "GitHub authorization failed";
+    console.error(
+      JSON.stringify({ event: "github_authorization_error", error: message }),
+    );
+    return errorPage(
+      `${message}. Return to administration and start a new GitHub authorization attempt.`,
+      502,
+    );
+  }
 }
 
 async function handleAuthorizeGet(
@@ -225,6 +291,210 @@ async function handleAdminPost(
   const { pathname } = new URL(request.url);
   const { form, session } = await requireAdminPost(request, env);
   const stub = env.VAULT_CONTAINER.getByName("primary-vault");
+  if (pathname === "/admin/github/repository") {
+    const flow = await takeFlow(env, form.get("github_state") ?? "");
+    if (
+      !flow ||
+      flow.kind !== "github-repository-selection" ||
+      flow.adminSub !== session.sub
+    )
+      return renderAdmin(
+        env,
+        session,
+        undefined,
+        "GitHub repository selection expired",
+      );
+    const index = Number(form.get("repository_index") ?? "-1");
+    const selected = Number.isInteger(index)
+      ? flow.repositories[index]
+      : undefined;
+    if (!selected)
+      return renderAdmin(env, session, undefined, "Select a GitHub repository");
+    const branches = await listGitHubBranches(
+      flow.accessToken,
+      selected.fullName,
+    );
+    const branchState = await storeFlow(env, {
+      kind: "github-branch-selection",
+      adminSub: session.sub,
+      repository: {
+        installationId: selected.installationId,
+        repositoryId: selected.repositoryId,
+        fullName: selected.fullName,
+      },
+      branches,
+    });
+    return withCookie(
+      githubBranchPage({
+        email: session.email,
+        csrf: session.csrf,
+        state: branchState,
+        repository: selected.fullName,
+        branches,
+      }),
+      secureCookie(CSRF_COOKIE, session.csrf, 28_800),
+    );
+  }
+  if (pathname === "/admin/github/configure") {
+    const flow = await takeFlow(env, form.get("github_state") ?? "");
+    if (
+      !flow ||
+      flow.kind !== "github-branch-selection" ||
+      flow.adminSub !== session.sub
+    )
+      return renderAdmin(
+        env,
+        session,
+        undefined,
+        "GitHub repository selection expired",
+      );
+    const branch = form.get("branch")?.trim() ?? "";
+    if (
+      !branch ||
+      (flow.branches.length > 0 && !flow.branches.includes(branch)) ||
+      (flow.branches.length === 0 && branch !== "main")
+    )
+      return renderAdmin(env, session, undefined, "Select a valid Git branch");
+    try {
+      await stub.configureGit({
+        installationId: flow.repository.installationId,
+        repositoryId: flow.repository.repositoryId,
+        repository: flow.repository.fullName,
+        branch,
+      });
+      return renderAdmin(
+        env,
+        session,
+        `Git reconciliation configured in paused mode for ${flow.repository.fullName}:${branch}. Preview it before enabling.`,
+      );
+    } catch (error) {
+      return renderAdmin(
+        env,
+        session,
+        undefined,
+        error instanceof Error ? error.message : "GitHub setup failed",
+      );
+    }
+  }
+  if (pathname === "/admin/github/preview") {
+    const result = await stub.previewGit();
+    return renderAdmin(
+      env,
+      session,
+      result?.safety_event
+        ? "Initial reconciliation preview is ready."
+        : undefined,
+      result?.safety_event
+        ? undefined
+        : result?.error || "Could not prepare the reconciliation preview",
+    );
+  }
+  if (pathname === "/admin/github/restore") {
+    const restoreCommit = form.get("restore_commit")?.trim() ?? "";
+    if (!/^[a-f0-9]{40,64}$/u.test(restoreCommit))
+      return renderAdmin(
+        env,
+        session,
+        undefined,
+        "Enter a full Git commit SHA",
+      );
+    const result = await stub.previewGit(restoreCommit);
+    return renderAdmin(
+      env,
+      session,
+      result?.safety_event
+        ? "Historical recovery preview is ready."
+        : undefined,
+      result?.safety_event
+        ? undefined
+        : result?.error || "Could not prepare the recovery preview",
+    );
+  }
+  if (pathname === "/admin/github/safety") {
+    const action = form.get("action");
+    const eventId = form.get("event_id") ?? "";
+    if (
+      (action !== "approve" && action !== "reject") ||
+      !/^[a-f0-9-]{36}$/u.test(eventId)
+    )
+      return renderAdmin(env, session, undefined, "Invalid safety action");
+    const result = await stub.resolveGitSafety(action, eventId);
+    return renderAdmin(
+      env,
+      session,
+      result?.state === "converged"
+        ? action === "approve"
+          ? "The reviewed reconciliation candidate was applied."
+          : "The deletion was rejected and the safe vault was republished."
+        : undefined,
+      result?.state === "converged"
+        ? undefined
+        : result?.error || result?.blocked_reason || "Safety resolution failed",
+    );
+  }
+  if (pathname === "/admin/github/safety-refresh") {
+    const eventId = form.get("event_id") ?? "";
+    if (!/^[a-f0-9-]{36}$/u.test(eventId))
+      return renderAdmin(env, session, undefined, "Invalid safety event");
+    const result = await stub.refreshGitSafety(eventId);
+    return renderAdmin(
+      env,
+      session,
+      result?.safety_event
+        ? "The safety preview was refreshed against current Git and Obsidian state."
+        : undefined,
+      result?.safety_event
+        ? undefined
+        : result?.error || "Could not refresh the safety preview",
+    );
+  }
+  if (pathname === "/admin/github/reconcile") {
+    const result = await stub.reconcileGit();
+    return renderAdmin(
+      env,
+      session,
+      result?.state === "converged"
+        ? "Git reconciliation completed."
+        : undefined,
+      result?.state === "converged"
+        ? undefined
+        : result?.error ||
+            result?.blocked_reason ||
+            "Git reconciliation is pending",
+    );
+  }
+  if (pathname === "/admin/github/enable") {
+    await stub.enableScheduledGit();
+    return renderAdmin(
+      env,
+      session,
+      "Scheduled Git reconciliation is enabled.",
+    );
+  }
+  if (pathname === "/admin/github/resolve") {
+    const resolution = form.get("resolution");
+    if (resolution !== "adopt_remote" && resolution !== "reconnect_base")
+      return renderAdmin(env, session, undefined, "Invalid resolution action");
+    const result = await stub.reconcileGit(resolution);
+    return renderAdmin(
+      env,
+      session,
+      result?.state === "converged"
+        ? "Git history resolution completed."
+        : undefined,
+      result?.state === "converged"
+        ? undefined
+        : result?.error || result?.blocked_reason || "Resolution is pending",
+    );
+  }
+  if (pathname === "/admin/github/disconnect") {
+    await stub.disconnectGit();
+    return renderAdmin(
+      env,
+      session,
+      "GitHub repository disconnected. Remote data was not deleted.",
+    );
+  }
   if (pathname === "/admin/obsidian-login") {
     const email = form.get("email") ?? "";
     const password = form.get("password") ?? "";
@@ -310,11 +580,55 @@ export const defaultHandler = {
       }
       if (request.method === "GET" && url.pathname === "/admin/callback")
         return handleAdminCallback(request, env);
+      if (
+        request.method === "GET" &&
+        url.pathname === "/admin/github/connect"
+      ) {
+        const session = await adminSession(request, env);
+        if (!session)
+          return Response.redirect(
+            new URL("/admin/login", request.url).href,
+            302,
+          );
+        const missingGitHub = missingGitHubBindings(env);
+        return missingGitHub.length > 0
+          ? errorPage(
+              `GitHub integration is missing Worker bindings: ${missingGitHub.join(", ")}. Configure them and deploy again.`,
+              503,
+            )
+          : githubAuthorizeRedirect(request, env, session.sub);
+      }
+      if (request.method === "GET" && url.pathname === "/admin/github/callback")
+        return handleGitHubCallback(request, env);
       if (request.method === "GET" && url.pathname === "/admin") {
         const session = await adminSession(request, env);
         return session
           ? renderAdmin(env, session)
           : Response.redirect(new URL("/admin/login", request.url).href, 302);
+      }
+      if (
+        request.method === "GET" &&
+        url.pathname === "/admin/github/safety-manifest"
+      ) {
+        const session = await adminSession(request, env);
+        if (!session)
+          return Response.redirect(
+            new URL("/admin/login", request.url).href,
+            302,
+          );
+        const eventId = url.searchParams.get("event_id") ?? "";
+        if (!/^[a-f0-9-]{36}$/u.test(eventId))
+          return errorPage("Invalid safety event", 400);
+        const manifest =
+          await env.VAULT_CONTAINER.getByName(
+            "primary-vault",
+          ).gitSafetyManifest(eventId);
+        return Response.json(manifest, {
+          headers: {
+            "cache-control": "no-store",
+            "content-disposition": `attachment; filename="git-safety-${eventId}.json"`,
+          },
+        });
       }
       if (request.method === "POST" && url.pathname.startsWith("/admin/"))
         return handleAdminPost(request, env);

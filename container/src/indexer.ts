@@ -206,7 +206,8 @@ export class VaultIndexer {
       if (entry.isSymbolicLink()) continue;
       if (
         entry.isDirectory() &&
-        IGNORED_DIRECTORIES.has(entry.name.toLocaleLowerCase("en-US"))
+        (IGNORED_DIRECTORIES.has(entry.name.toLocaleLowerCase("en-US")) ||
+          (directory === this.vaultRoot && entry.name.startsWith(".")))
       )
         continue;
       const absolute = path.join(directory, entry.name);
@@ -387,11 +388,18 @@ export class VaultIndexer {
     this.watcher = watch(this.vaultRoot, {
       ignoreInitial: true,
       ignored: (watchedPath) =>
-        watchedPath
-          .split(path.sep)
-          .some((segment) =>
-            IGNORED_DIRECTORIES.has(segment.toLocaleLowerCase("en-US")),
-          ),
+        (() => {
+          const relative = path.relative(this.vaultRoot, watchedPath);
+          const first = relative.split(path.sep)[0] ?? "";
+          return (
+            first.startsWith(".") ||
+            relative
+              .split(path.sep)
+              .some((segment) =>
+                IGNORED_DIRECTORIES.has(segment.toLocaleLowerCase("en-US")),
+              )
+          );
+        })(),
       awaitWriteFinish: { stabilityThreshold: 250, pollInterval: 50 },
     });
     const schedule = (absolute: string, removed: boolean) => {

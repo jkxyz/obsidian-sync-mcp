@@ -107,7 +107,7 @@ function createServer(env: AppEnv, scopes: string[]): McpServer {
     "vault_status",
     {
       description:
-        "Return vault readiness, synchronization health, queue state, disk use, and indexed file counts.",
+        "Return vault readiness, Obsidian and Git synchronization health, Git heads/retries/conflicts/LFS state, queue state, disk use, and indexed file counts.",
       inputSchema: z.object({}),
     },
     async () => invoke("vault.read", { kind: "vault_status" }),

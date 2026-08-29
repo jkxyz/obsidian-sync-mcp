@@ -2,7 +2,13 @@ import type { AuthRequest } from "@cloudflare/workers-oauth-provider";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { z } from "zod";
 import type { AppEnv, AuthProps } from "../env.js";
-import { createPkce, signValue, verifySignedValue } from "./crypto.js";
+import {
+  createPkce,
+  decryptJson,
+  encryptJson,
+  signValue,
+  verifySignedValue,
+} from "./crypto.js";
 
 const tokenResponseSchema = z.object({
   access_token: z.string(),
@@ -13,7 +19,30 @@ const tokenResponseSchema = z.object({
 export type StoredFlow =
   | { kind: "mcp-approval"; oauthRequest: AuthRequest }
   | { kind: "mcp-oidc"; oauthRequest: AuthRequest; verifier: string }
-  | { kind: "admin-oidc"; verifier: string; returnTo: string };
+  | { kind: "admin-oidc"; verifier: string; returnTo: string }
+  | { kind: "github-oauth"; verifier: string; adminSub: string }
+  | {
+      kind: "github-repository-selection";
+      adminSub: string;
+      accessToken: string;
+      repositories: Array<{
+        installationId: number;
+        repositoryId: number;
+        fullName: string;
+        defaultBranch: string;
+        private: boolean;
+      }>;
+    }
+  | {
+      kind: "github-branch-selection";
+      adminSub: string;
+      repository: {
+        installationId: number;
+        repositoryId: number;
+        fullName: string;
+      };
+      branches: string[];
+    };
 
 type OidcFlowInput =
   | { kind: "mcp-oidc"; oauthRequest: AuthRequest }
@@ -24,9 +53,13 @@ export async function storeFlow(
   flow: StoredFlow,
 ): Promise<string> {
   const nonce = crypto.randomUUID();
-  await env.OAUTH_KV.put(`flow:${nonce}`, JSON.stringify(flow), {
-    expirationTtl: 600,
-  });
+  await env.OAUTH_KV.put(
+    `flow:${nonce}`,
+    await encryptJson(flow, env.COOKIE_ENCRYPTION_KEY),
+    {
+      expirationTtl: 600,
+    },
+  );
   return signValue(nonce, env.COOKIE_ENCRYPTION_KEY);
 }
 
@@ -39,8 +72,11 @@ export async function takeFlow(
   const key = `flow:${nonce}`;
   const stored = await env.OAUTH_KV.get(key);
   if (!stored) return null;
+  const claimed =
+    await env.VAULT_CONTAINER.getByName("primary-vault").claimOAuthFlow(nonce);
+  if (!claimed) return null;
   await env.OAUTH_KV.delete(key);
-  return JSON.parse(stored) as StoredFlow;
+  return decryptJson<StoredFlow>(stored, env.COOKIE_ENCRYPTION_KEY);
 }
 
 export async function oidcRedirect(

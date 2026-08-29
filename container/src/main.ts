@@ -7,6 +7,9 @@ import {
 import { VaultService } from "./service.js";
 import {
   configureSchema,
+  gitFinalizeSchema,
+  gitReconcileSchema,
+  gitSafetyManifestSchema,
   loginSchema,
   vaultOperationSchema,
 } from "./validation.js";
@@ -92,6 +95,24 @@ const server = createServer(async (request, response) => {
     } else if (pathname === "/runtime/status") {
       await readJson(request, 1024);
       result = await service.runtimeStatus();
+    } else if (pathname === "/sync/safety-check") {
+      await readJson(request, 1024);
+      result = await service.scheduledSafetyCheck();
+    } else if (pathname === "/git/reconcile") {
+      result = await service.reconcileGit(
+        gitReconcileSchema.parse(await readJson(request, 65_536)),
+      );
+    } else if (pathname === "/git/reset") {
+      await readJson(request, 1024);
+      result = await service.resetGit();
+    } else if (pathname === "/git/safety-manifest") {
+      const input = gitSafetyManifestSchema.parse(
+        await readJson(request, 65_536),
+      );
+      result = await service.gitSafetyManifest(input.event_id);
+    } else if (pathname === "/git/finalize") {
+      const input = gitFinalizeSchema.parse(await readJson(request, 65_536));
+      result = await service.finalizeGitTransaction(input.transaction_id);
     } else if (pathname === "/rpc")
       result = await service.handle(
         vaultOperationSchema.parse(await readJson(request, 8 * 1024 * 1024)),

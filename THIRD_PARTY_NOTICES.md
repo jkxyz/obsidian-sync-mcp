@@ -16,4 +16,4 @@ This project distributes source code and build instructions and does not publish
 
 ## Other dependencies
 
-Other dependencies installed from npm retain their own licenses and notices. Refer to their published packages and source repositories for the controlling terms. Their inclusion does not change the license of this project's original code or cause third-party code to be relicensed under the AGPL.
+The runtime image also installs Git and Git LFS from Debian packages. They and other dependencies installed from npm retain their own licenses and notices. Refer to their published packages and source repositories for the controlling terms. Their inclusion does not change the license of this project's original code or cause third-party code to be relicensed under the AGPL.
