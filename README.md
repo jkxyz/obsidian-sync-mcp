@@ -1,8 +1,13 @@
 # Obsidian Sync MCP on Cloudflare
 
-A single-vault, remote MCP server backed by official Obsidian Sync. A Cloudflare Worker handles MCP and OAuth, one named Durable Object serializes vault activity and records idempotency state, and a Cloudflare Container runs the official `obsidian-headless` client plus a local SQLite FTS5 index.
+> [!WARNING]
+> **Alpha quality:** This software is under active development and may contain bugs that interrupt sync or modify or delete vault data unexpectedly. Keep independent backups, and do not rely on it as the only copy of important data.
 
-This is an implementation for one private vault, not a multi-tenant service. It is intentionally deny-by-default around paths, outbound network access, OAuth scopes, and destructive writes.
+Obsidian Sync MCP lets an MCP-capable assistant work with the same private Obsidian vault you use on desktop and mobile. It runs remotely on Cloudflare, connects through official Obsidian Sync, and exposes OAuth-protected tools for searching, reading, creating, editing, moving, and deleting notes and attachments. MCP clients never need direct access to your Obsidian credentials or a locally mounted copy of the vault.
+
+Before a write, the service pulls the latest vault state; afterward, it syncs the result back to Obsidian. It also reconciles the complete vault—including configuration and attachments—with a selected GitHub repository, providing version history without treating Git as a shortcut around Sync. Vault operations are serialized, writes are revision-guarded and idempotent, and suspicious deletion sets are stopped for verification before they can become authoritative.
+
+The project is designed to be self-hosted for one private vault rather than operated as a multi-tenant service. A Cloudflare Worker handles MCP, OAuth, and the admin UI; a Durable Object coordinates activity; and a Cloudflare Container runs `obsidian-headless`, the search index, and Git reconciliation. Access, paths, outbound networking, OAuth scopes, and destructive operations are deny-by-default.
 
 ## What it provides
 
