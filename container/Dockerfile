@@ -22,6 +22,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY container/package.json ./container/package.json
 RUN npm ci --omit=dev --workspace @obsidian-sync-mcp/container --include-workspace-root=false && npm cache clean --force
+COPY LICENSE THIRD_PARTY_NOTICES.md ./
 COPY --from=build /app/container/dist ./container/dist
 RUN mkdir -p /data/vault /data/config /home/ob && chown -R node:node /data /app /home/ob
 

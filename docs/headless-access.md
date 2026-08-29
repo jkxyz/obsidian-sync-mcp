@@ -10,7 +10,7 @@ This is the best available fit because it is maintained under the `obsidianmd` o
 
 There are caveats:
 
-- Obsidian documents [Headless Sync](https://help.obsidian.md/sync/headless) as open beta, and the installed npm package reports `UNLICENSED`. Confirm that your private deployment and any redistribution of a built image comply with Obsidian's terms; this repository makes no license determination.
+- Obsidian documents [Headless Sync](https://help.obsidian.md/sync/headless) as open beta, and the installed npm package reports `UNLICENSED`. The repository's AGPL license does not cover or relicense that package. Confirm that your private deployment and any redistribution of a built image comply with Obsidian's terms; see [third-party notices](../THIRD_PARTY_NOTICES.md).
 - The protocol has no documented remote CAS API. Revision guards protect the MCP server's local snapshot but cannot lock other Obsidian clients.
 - Open upstream reports have described conflict-strategy behavior and other early-client defects, including [a concurrent-edit report against 0.0.12](https://github.com/obsidianmd/obsidian-headless/issues/42). Pinning the exact version and testing restore, conflicts, large vaults, shared vaults, and E2E behavior against a disposable vault before production is prudent. The project deliberately does not patch the distributed CLI bundle.
 - Obsidian credentials are supplied to the documented non-interactive CLI flags during bootstrap. They are visible only within the isolated Container's short-lived process environment/argument surface and are not stored; the returned token is stored in an encrypted Durable Object envelope.

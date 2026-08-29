@@ -73,3 +73,11 @@ npm run deploy:dry-run
 The last command also builds the Container image and therefore requires Docker or a Wrangler-compatible alternative. The Worker-only dry-run still validates bundling, bindings, Durable Object migrations, and the Container declaration.
 
 Operational limitations and recovery procedures are documented in [security and operations](docs/security-operations.md). The headless-client investigation and rationale for the selected integration are in [headless access options](docs/headless-access.md).
+
+## License
+
+Copyright (C) 2026 jkxyz.
+
+The original code in this repository is licensed under the [GNU Affero General Public License v3.0 or later](LICENSE). The corresponding source is available at [github.com/jkxyz/obsidian-sync-mcp](https://github.com/jkxyz/obsidian-sync-mcp).
+
+Dependencies and other third-party components remain under their own terms and are not relicensed by the AGPL. In particular, `obsidian-headless` declares `UNLICENSED`; this project provides source and build instructions but does not publish prebuilt container images for third-party download. See [third-party notices](THIRD_PARTY_NOTICES.md).

@@ -10,6 +10,8 @@ import {
   type VaultResponse,
 } from "../shared/protocol.js";
 
+const SOURCE_URL = "https://github.com/jkxyz/obsidian-sync-mcp";
+
 const requestId = z
   .string()
   .uuid()
@@ -78,7 +80,11 @@ function textResult(response: VaultResponse) {
 }
 
 function createServer(env: AppEnv, scopes: string[]): McpServer {
-  const server = new McpServer({ name: "Obsidian Sync MCP", version: "0.1.0" });
+  const server = new McpServer({
+    name: "Obsidian Sync MCP",
+    version: "0.1.0",
+    websiteUrl: SOURCE_URL,
+  });
   const stub = env.VAULT_CONTAINER.getByName("primary-vault");
 
   const invoke = async (

@@ -2,6 +2,15 @@
   "name": "obsidian-sync-mcp",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-or-later",
+  "homepage": "https://github.com/jkxyz/obsidian-sync-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jkxyz/obsidian-sync-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jkxyz/obsidian-sync-mcp/issues"
+  },
   "type": "module",
   "workspaces": [
     "container"

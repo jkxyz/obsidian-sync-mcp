@@ -3,6 +3,9 @@ import type {
   ClientInfo,
 } from "@cloudflare/workers-oauth-provider";
 
+const SOURCE_URL = "https://github.com/jkxyz/obsidian-sync-mcp";
+const LICENSE_URL = `${SOURCE_URL}/blob/main/LICENSE`;
+
 export function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -14,7 +17,7 @@ export function escapeHtml(value: string): string {
 
 function page(title: string, body: string): Response {
   return new Response(
-    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>body{font:16px/1.5 system-ui;max-width:50rem;margin:3rem auto;padding:0 1rem;color:#1f2937}main{border:1px solid #d1d5db;border-radius:12px;padding:1.5rem}label{display:block;margin:.8rem 0 .25rem}input,select,button{font:inherit;padding:.6rem;width:100%;box-sizing:border-box}button{margin-top:1rem;cursor:pointer}code{background:#f3f4f6;padding:.15rem .3rem}nav a{margin-right:1rem}.notice{background:#fef3c7;padding:.75rem;border-radius:6px}.error{background:#fee2e2;padding:.75rem;border-radius:6px}</style></head><body><main>${body}</main></body></html>`,
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>body{font:16px/1.5 system-ui;max-width:50rem;margin:3rem auto;padding:0 1rem;color:#1f2937}main{border:1px solid #d1d5db;border-radius:12px;padding:1.5rem}footer{font-size:.875rem;margin:1rem 0;text-align:center;color:#4b5563}label{display:block;margin:.8rem 0 .25rem}input,select,button{font:inherit;padding:.6rem;width:100%;box-sizing:border-box}button{margin-top:1rem;cursor:pointer}code{background:#f3f4f6;padding:.15rem .3rem}nav a{margin-right:1rem}.notice{background:#fef3c7;padding:.75rem;border-radius:6px}.error{background:#fee2e2;padding:.75rem;border-radius:6px}</style></head><body><main>${body}</main><footer><a href="${SOURCE_URL}">Source code</a> · <a href="${LICENSE_URL}" rel="license">AGPL-3.0-or-later</a> · No warranty</footer></body></html>`,
     {
       headers: {
         "content-type": "text/html; charset=utf-8",
