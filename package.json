@@ -20,9 +20,11 @@
     "cf-typegen": "wrangler types",
     "check": "npm run cf-typegen && npm run typecheck && npm test && npm run deploy:dry-run",
     "deploy": "wrangler deploy",
+    "deploy:configured": "node scripts/wrangler-with-vars.mjs deploy",
     "deploy:dry-run": "wrangler deploy --dry-run",
+    "deploy:dry-run:configured": "node scripts/wrangler-with-vars.mjs deploy --dry-run --containers-rollout=none",
     "deploy:dry-run:worker": "wrangler deploy --dry-run --containers-rollout=none",
-    "dev": "wrangler dev",
+    "dev": "node scripts/wrangler-with-vars.mjs dev",
     "format:check": "prettier --check .",
     "test": "vitest run && npm test --workspace container",
     "typecheck": "tsc --noEmit && npm run typecheck --workspace container"
@@ -45,5 +47,12 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true,
+    "core-js-pure@3.50.0": true,
+    "esbuild@0.28.1": true,
+    "workerd@1.20260815.1": true,
+    "workerd@1.20260828.1": true
   }
 }

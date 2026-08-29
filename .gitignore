@@ -2,8 +2,8 @@ node_modules/
 dist/
 .wrangler/
 .dev.vars*
-!.dev.vars.example
 .env*
+!.env.example
 coverage/
 container/dist/
 *.log
