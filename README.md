@@ -12,7 +12,7 @@ This is an implementation for one private vault, not a multi-tenant service. It 
 - Revision-guarded note patches, attachment writes, moves, and deletes; UUID request IDs make MCP mutation retries idempotent.
 - A pull-before-write and push-after-write pipeline using official Obsidian Headless, with explicit `sync_pending` results when remote confirmation fails.
 - Full-vault three-way reconciliation with a selected GitHub repository, including `.obsidian`, `.agents`, attachments, Git LFS, and independently reported Git convergence.
-- An isolated read-only Sync mirror, recoverable live checkpoints, and deletion quarantine before destructive remote state can become authoritative.
+- Serialized scheduled one-shot Sync, an isolated read-only mirror, recoverable live checkpoints, and two-pass deletion quarantine before destructive remote state can become authoritative.
 - Protected `.obsidian` configuration, traversal/symlink/case-collision defenses, bounded request bodies, and a 5 MiB MCP attachment limit.
 
 ## Architecture

@@ -151,7 +151,7 @@ Keep GitHub reconciliation disconnected until the guarded build is deployed and 
 2. In the historical recovery field, enter `ff78dc1af0ca1a4a0810b8353671e1003cce4a0f`.
 3. Review the safe-union preview. It restores paths missing since that commit, retains current-only paths and current versions of surviving paths, and preserves workflows from the current branch.
 4. Approve the exact event. A stale Git head, Sync version/digest, live safe tree, or candidate digest invalidates the action instead of applying it.
-5. Verify the resulting commit is a descendant of the latest remote head, the full live tree matches it except excluded workflows, the safety mirror contains the supported Obsidian subset, and continuous Sync is healthy.
+5. Verify the resulting commit is a descendant of the latest remote head, the full live tree matches it except excluded workflows, the safety mirror contains the supported Obsidian subset, and scheduled one-shot Sync is healthy.
 6. Run two manual no-op reconciliations, then select **Enable one-minute schedule**.
 
 Never deploy this recovery by resetting or force-pushing the branch. The losing deletion commit remains part of Git history.

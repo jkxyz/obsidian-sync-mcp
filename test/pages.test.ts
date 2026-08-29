@@ -68,6 +68,26 @@ describe("interactive source offer", () => {
     expect(html).not.toContain("Preview initial reconciliation");
   });
 
+  it("shows verification state without offering reconciliation controls", async () => {
+    const html = await adminPage({
+      email: "owner@example.com",
+      csrf: "csrf",
+      configured: true,
+      vault: "Vault",
+      status: { runtime: { state: "verifying" } },
+      git: {
+        configured: true,
+        repository: "owner/private-vault",
+        branch: "main",
+        mode: "active",
+        status: { state: "converged" },
+      },
+    }).text();
+
+    expect(html).toContain("being rechecked independently");
+    expect(html).not.toContain("Reconcile now");
+  });
+
   it("renders candidate-bound quarantine controls", async () => {
     const html = await adminPage({
       email: "owner@example.com",

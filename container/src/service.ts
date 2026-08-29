@@ -46,14 +46,61 @@ import {
 } from "./sync.js";
 
 class SyncSafetyViolation extends Error {
-  constructor(readonly event: GitSafetyEvent) {
+  constructor(
+    readonly event: GitSafetyEvent,
+    readonly paths: string[] = event.paths,
+  ) {
     super("A destructive synchronization change requires admin review");
     this.name = "SyncSafetyViolation";
   }
 }
 
 type RuntimeState =
-  "unconfigured" | "warming" | "ready" | "quarantined" | "degraded";
+  | "unconfigured"
+  | "warming"
+  | "ready"
+  | "verifying"
+  | "quarantined"
+  | "degraded";
+
+type PendingSafetyObservation = {
+  event: GitSafetyEvent;
+  paths: string[];
+};
+
+type SafetyObservationHistoryEntry = PendingSafetyObservation & {
+  outcome: "pending" | "cleared" | "confirmed" | "superseded";
+  recorded_at: string;
+};
+
+function sortedUnique(values: readonly string[]): string[] {
+  return [...new Set(values)].sort();
+}
+
+export function sameSafetyObservation(
+  left: PendingSafetyObservation,
+  right: PendingSafetyObservation,
+): boolean {
+  const leftEvent = left.event;
+  const rightEvent = right.event;
+  return (
+    leftEvent.phase === rightEvent.phase &&
+    leftEvent.safe_tree === rightEvent.safe_tree &&
+    leftEvent.candidate_tree === rightEvent.candidate_tree &&
+    leftEvent.remote_head === rightEvent.remote_head &&
+    leftEvent.remote_version === rightEvent.remote_version &&
+    leftEvent.remote_digest === rightEvent.remote_digest &&
+    leftEvent.previous_files === rightEvent.previous_files &&
+    leftEvent.candidate_files === rightEvent.candidate_files &&
+    leftEvent.deleted_files === rightEvent.deleted_files &&
+    leftEvent.previous_bytes === rightEvent.previous_bytes &&
+    leftEvent.deleted_bytes === rightEvent.deleted_bytes &&
+    JSON.stringify(sortedUnique(leftEvent.reasons)) ===
+      JSON.stringify(sortedUnique(rightEvent.reasons)) &&
+    JSON.stringify(sortedUnique(left.paths)) ===
+      JSON.stringify(sortedUnique(right.paths))
+  );
+}
 
 function mirrorTree(snapshot: MirrorSnapshot): Tree {
   return new Map(
@@ -135,6 +182,7 @@ export class VaultService {
   private sync: SyncSupervisor;
   private lastGitResult: GitReconcileResult | null = null;
   private safetyEvent: GitSafetyEvent | null = null;
+  private pendingSafetyObservation: PendingSafetyObservation | null = null;
 
   constructor(
     private readonly vaultRoot: string,
@@ -158,6 +206,7 @@ export class VaultService {
       new VaultIndexer(vaultRoot, indexPath),
     );
     await service.loadSafetyEvent();
+    await service.loadPendingSafetyObservation();
     return service;
   }
 
@@ -170,6 +219,20 @@ export class VaultService {
 
   private safetyManifestPath(): string {
     return path.join(path.dirname(this.vaultRoot), "git-safety-manifest.json");
+  }
+
+  private pendingSafetyObservationPath(): string {
+    return path.join(
+      path.dirname(this.vaultRoot),
+      "git-safety-observation-pending.json",
+    );
+  }
+
+  private safetyObservationHistoryPath(): string {
+    return path.join(
+      path.dirname(this.vaultRoot),
+      "git-safety-observation-history.json",
+    );
   }
 
   private acceptedCheckpointPath(): string {
@@ -189,10 +252,109 @@ export class VaultService {
     }
   }
 
+  private async loadPendingSafetyObservation(): Promise<void> {
+    try {
+      const value = JSON.parse(
+        await readFile(this.pendingSafetyObservationPath(), "utf8"),
+      ) as PendingSafetyObservation;
+      if (!value?.event || !Array.isArray(value.paths))
+        throw new Error("Invalid pending safety observation");
+      this.pendingSafetyObservation = value;
+      this.state = "verifying";
+      this.stateError =
+        "A destructive synchronization observation awaits an independent confirmation pass";
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+
+  private async safetyObservationHistory(): Promise<
+    SafetyObservationHistoryEntry[]
+  > {
+    try {
+      const value = JSON.parse(
+        await readFile(this.safetyObservationHistoryPath(), "utf8"),
+      ) as unknown;
+      return Array.isArray(value)
+        ? value.filter((entry): entry is SafetyObservationHistoryEntry =>
+            Boolean(entry && typeof entry === "object"),
+          )
+        : [];
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+  }
+
+  private async recordSafetyObservation(
+    observation: PendingSafetyObservation,
+    outcome: SafetyObservationHistoryEntry["outcome"],
+  ): Promise<void> {
+    try {
+      const history = await this.safetyObservationHistory();
+      history.push({
+        event: observation.event,
+        paths: observation.event.paths,
+        outcome,
+        recorded_at: new Date().toISOString(),
+      });
+      await atomicWrite(
+        this.safetyObservationHistoryPath(),
+        Buffer.from(JSON.stringify(history.slice(-20)), "utf8"),
+      );
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          event: "git_safety_history_error",
+          error: error instanceof Error ? error.message : "unknown",
+        }),
+      );
+    }
+  }
+
+  private async stageSafetyObservation(
+    observation: PendingSafetyObservation,
+  ): Promise<void> {
+    if (this.pendingSafetyObservation)
+      await this.recordSafetyObservation(
+        this.pendingSafetyObservation,
+        "superseded",
+      );
+    await atomicWrite(
+      this.pendingSafetyObservationPath(),
+      Buffer.from(JSON.stringify(observation), "utf8"),
+    );
+    this.pendingSafetyObservation = observation;
+    await this.recordSafetyObservation(observation, "pending");
+    this.state = "verifying";
+    this.stateError =
+      "A destructive synchronization observation awaits an independent confirmation pass";
+  }
+
+  private async clearPendingSafetyObservation(
+    outcome: Extract<
+      SafetyObservationHistoryEntry["outcome"],
+      "cleared" | "confirmed"
+    >,
+  ): Promise<void> {
+    if (this.pendingSafetyObservation)
+      await this.recordSafetyObservation(
+        this.pendingSafetyObservation,
+        outcome,
+      );
+    await rm(this.pendingSafetyObservationPath(), { force: true });
+    this.pendingSafetyObservation = null;
+  }
+
   private async enterQuarantine(
     event: GitSafetyEvent,
     manifestPaths: string[] = event.paths,
   ): Promise<void> {
+    if (this.safetyEvent && this.safetyEvent.event_id !== event.event_id)
+      await this.recordSafetyObservation(
+        { event: this.safetyEvent, paths: this.safetyEvent.paths },
+        "superseded",
+      );
     const marker = this.safetyMarkerPath();
     await atomicWrite(
       this.safetyManifestPath(),
@@ -206,7 +368,6 @@ export class VaultService {
     this.state = "quarantined";
     this.stateError =
       "A destructive synchronization change requires admin review";
-    await this.sync.stopContinuous();
   }
 
   private async leaveQuarantine(): Promise<void> {
@@ -340,6 +501,7 @@ export class VaultService {
   private async guardedOneShot(
     phase: Extract<GitSafetyPhase, "live_pull" | "post_apply_sync">,
     plannedRemoteDeletes: ReadonlySet<string> = new Set(),
+    quarantineOnViolation = true,
   ): Promise<SyncRunObservation> {
     const checkpoints = this.checkpointRepository();
     await checkpoints.initialize();
@@ -348,19 +510,20 @@ export class VaultService {
     const observed = safe;
     safe = await this.restoreAcceptedCheckpoint(checkpoints, observed);
     if (safe.treeOid !== observed.treeOid) {
-      const continuousLoss = analyzeDeletion(safe.tree, observed.tree);
+      const acceptedLoss = analyzeDeletion(safe.tree, observed.tree);
       const event = this.makeSafetyEvent(
         phase,
         safe.treeOid,
         observed.treeOid,
-        continuousLoss,
+        acceptedLoss,
         {
           remote: mirror.snapshot,
-          reasons: ["continuous_sync_checkpoint_loss"],
+          reasons: ["accepted_checkpoint_loss"],
         },
       );
-      await this.enterQuarantine(event, continuousLoss.deletedPaths);
-      throw new SyncSafetyViolation(event);
+      if (quarantineOnViolation)
+        await this.enterQuarantine(event, acceptedLoss.deletedPaths);
+      throw new SyncSafetyViolation(event, acceptedLoss.deletedPaths);
     }
     const baseline = await this.sync.loadMirrorBaseline();
     let predictedRemoteDeletes = new Set<string>();
@@ -379,8 +542,9 @@ export class VaultService {
           remoteDeletion,
           { remote: mirror.snapshot },
         );
-        await this.enterQuarantine(event, remoteDeletion.deletedPaths);
-        throw new SyncSafetyViolation(event);
+        if (quarantineOnViolation)
+          await this.enterQuarantine(event, remoteDeletion.deletedPaths);
+        throw new SyncSafetyViolation(event, remoteDeletion.deletedPaths);
       }
     }
 
@@ -431,8 +595,8 @@ export class VaultService {
           paths,
         },
       );
-      await this.enterQuarantine(event, paths);
-      throw new SyncSafetyViolation(event);
+      if (quarantineOnViolation) await this.enterQuarantine(event, paths);
+      throw new SyncSafetyViolation(event, paths);
     }
     const verified = await this.sync.refreshSafetyMirror();
     await this.assertMirrorMatchesLive(verified.snapshot);
@@ -488,9 +652,21 @@ export class VaultService {
     this.state = "warming";
     this.stateError = null;
     try {
-      await this.sync.stopContinuous();
       await this.indexer.stopWatching();
       await this.sync.configure(input);
+      if (this.pendingSafetyObservation && !this.safetyEvent) {
+        await this.sync.activateBidirectional();
+        await this.indexer.rebuild();
+        this.indexer.startWatching();
+        this.state = "verifying";
+        this.stateError =
+          "A destructive synchronization observation awaits an independent confirmation pass";
+        return {
+          ok: true,
+          data: { vault: input.vault, verifying: true },
+          sync_state: "sync_pending",
+        };
+      }
       if (this.safetyEvent || input.pauseSync) {
         await this.sync.activateBidirectional();
         await this.indexer.rebuild();
@@ -508,7 +684,6 @@ export class VaultService {
       await this.assertDiskHeadroom();
       await this.indexer.rebuild();
       this.indexer.startWatching();
-      this.sync.startContinuous();
       this.state = "ready";
       return {
         ok: true,
@@ -538,7 +713,6 @@ export class VaultService {
 
   async reset(): Promise<VaultResponse> {
     return this.enqueue(async () => {
-      await this.sync.stopContinuous();
       await this.indexer.stopWatching();
       await rm(this.vaultRoot, { recursive: true, force: true });
       await rm(path.join(path.dirname(this.vaultRoot), "config"), {
@@ -573,12 +747,15 @@ export class VaultService {
       await rm(this.acceptedCheckpointPath(), { force: true });
       await rm(this.safetyMarkerPath(), { force: true });
       await rm(this.safetyManifestPath(), { force: true });
+      await rm(this.pendingSafetyObservationPath(), { force: true });
+      await rm(this.safetyObservationHistoryPath(), { force: true });
       await mkdir(this.vaultRoot, { recursive: true, mode: 0o700 });
       await this.indexer.rebuild();
       this.sync = new SyncSupervisor(this.vaultRoot, this.deviceName);
       this.state = "unconfigured";
       this.stateError = null;
       this.safetyEvent = null;
+      this.pendingSafetyObservation = null;
       return { ok: true, data: {}, sync_state: "not_applicable" };
     });
   }
@@ -591,8 +768,11 @@ export class VaultService {
       counts: this.indexer.counts(),
       filesystemCounts: await this.indexer.filesystemCounts(),
       sync: await this.sync.status(),
+      syncDriver: "scheduled_one_shot",
       git: this.lastGitResult,
       safetyEvent: this.safetyEvent,
+      pendingSafetyEvent: this.pendingSafetyObservation?.event ?? null,
+      safetyHistory: await this.safetyObservationHistory(),
       headlessVersion: "0.0.14",
     };
   }
@@ -670,7 +850,6 @@ export class VaultService {
         remoteHead = await repository.fetch();
 
         if (action === "reject") {
-          await this.sync.stopContinuous();
           indexPaused = true;
           await this.indexer.stopWatching();
           const activeEvent = this.safetyEvent ?? input.safety_event;
@@ -738,7 +917,6 @@ export class VaultService {
           return result;
         }
 
-        await this.sync.stopContinuous();
         indexPaused = true;
         await this.indexer.stopWatching();
 
@@ -1325,8 +1503,6 @@ export class VaultService {
           }
         }
         this.indexer.startWatching();
-        if (this.state === "ready" && !this.safetyEvent)
-          this.sync.startContinuous();
       }
     });
   }
@@ -1356,25 +1532,42 @@ export class VaultService {
     safety_event?: GitSafetyEvent;
   }> {
     return this.enqueue(async () => {
-      if (this.state !== "ready")
+      if (this.state !== "ready" && this.state !== "verifying")
         return {
           state: this.state === "quarantined" ? "quarantined" : "not_ready",
           ...(this.safetyEvent ? { safety_event: this.safetyEvent } : {}),
         };
-      await this.sync.stopContinuous();
+      // Scheduled mode deliberately uses only serialized one-shot Sync. No
+      // long-lived Headless process is interrupted at the cron boundary.
       await this.indexer.stopWatching();
+      this.state = "verifying";
+      this.stateError = null;
       try {
-        await this.guardedOneShot("live_pull");
+        await this.guardedOneShot("live_pull", new Set(), false);
+        if (this.pendingSafetyObservation)
+          await this.clearPendingSafetyObservation("cleared");
         await this.indexer.rebuild();
+        this.state = "ready";
         return { state: "ready" };
       } catch (error) {
         if (!(error instanceof SyncSafetyViolation)) throw error;
         await this.indexer.rebuild();
-        return { state: "quarantined", safety_event: error.event };
+        const observation: PendingSafetyObservation = {
+          event: error.event,
+          paths: error.paths,
+        };
+        if (
+          this.pendingSafetyObservation &&
+          sameSafetyObservation(this.pendingSafetyObservation, observation)
+        ) {
+          await this.clearPendingSafetyObservation("confirmed");
+          await this.enterQuarantine(error.event, error.paths);
+          return { state: "quarantined", safety_event: error.event };
+        }
+        await this.stageSafetyObservation(observation);
+        return { state: "not_ready" };
       } finally {
         this.indexer.startWatching();
-        if (this.state === "ready" && !this.safetyEvent)
-          this.sync.startContinuous();
       }
     });
   }
@@ -1386,7 +1579,6 @@ export class VaultService {
       await this.checkpointRepository().finalizeTransaction(transactionId);
       if (this.safetyEvent) {
         await this.leaveQuarantine();
-        this.sync.startContinuous();
       }
       return { finalized: true };
     });
@@ -1533,56 +1725,50 @@ export class VaultService {
   private async mutate(
     operation: Extract<VaultOperation, { request_id: string }>,
   ): Promise<VaultResponse> {
-    await this.sync.stopContinuous();
     try {
-      try {
-        await this.guardedOneShot("live_pull");
-        await this.indexer.flush();
-      } catch (error) {
-        if (error instanceof SyncSafetyViolation)
-          throw new VaultOperationError("not_ready", error.message, {
-            safety_event_id: error.event.event_id,
-          });
-        throw new VaultOperationError(
-          "sync_pending",
-          "Could not pull current remote state; no local mutation was applied",
-          {
-            phase: "pull",
+      await this.guardedOneShot("live_pull");
+      await this.indexer.flush();
+    } catch (error) {
+      if (error instanceof SyncSafetyViolation)
+        throw new VaultOperationError("not_ready", error.message, {
+          safety_event_id: error.event.event_id,
+        });
+      throw new VaultOperationError(
+        "sync_pending",
+        "Could not pull current remote state; no local mutation was applied",
+        {
+          phase: "pull",
+          cause: error instanceof Error ? error.message : "unknown",
+        },
+      );
+    }
+    const localResult = await this.applyMutation(operation);
+    try {
+      const plannedRemoteDeletes = new Set<string>();
+      if (operation.kind === "delete_file")
+        plannedRemoteDeletes.add(normalizeVaultPath(operation.path));
+      if (operation.kind === "move_file")
+        plannedRemoteDeletes.add(normalizeVaultPath(operation.source));
+      await this.guardedOneShot("post_apply_sync", plannedRemoteDeletes);
+      return { ok: true, data: localResult, sync_state: "synced_remote" };
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          code: "sync_pending",
+          message:
+            "The mutation was applied locally but could not be confirmed remotely",
+          details: {
+            phase: "push",
             cause: error instanceof Error ? error.message : "unknown",
+            ...(error instanceof SyncSafetyViolation
+              ? { safety_event_id: error.event.event_id }
+              : {}),
           },
-        );
-      }
-      const localResult = await this.applyMutation(operation);
-      try {
-        const plannedRemoteDeletes = new Set<string>();
-        if (operation.kind === "delete_file")
-          plannedRemoteDeletes.add(normalizeVaultPath(operation.path));
-        if (operation.kind === "move_file")
-          plannedRemoteDeletes.add(normalizeVaultPath(operation.source));
-        await this.guardedOneShot("post_apply_sync", plannedRemoteDeletes);
-        return { ok: true, data: localResult, sync_state: "synced_remote" };
-      } catch (error) {
-        return {
-          ok: false,
-          error: {
-            code: "sync_pending",
-            message:
-              "The mutation was applied locally but could not be confirmed remotely",
-            details: {
-              phase: "push",
-              cause: error instanceof Error ? error.message : "unknown",
-              ...(error instanceof SyncSafetyViolation
-                ? { safety_event_id: error.event.event_id }
-                : {}),
-            },
-          },
-          data: localResult,
-          sync_state: "sync_pending",
-        };
-      }
-    } finally {
-      if (this.state === "ready" && !this.safetyEvent)
-        this.sync.startContinuous();
+        },
+        data: localResult,
+        sync_state: "sync_pending",
+      };
     }
   }
 
@@ -1785,7 +1971,6 @@ export class VaultService {
   }
 
   async shutdown(): Promise<void> {
-    await this.sync.stopContinuous();
     await this.indexer.stopWatching();
     this.indexer.close();
   }

@@ -22,7 +22,7 @@ This service intentionally permits an authorized `vault.write` client to hard-de
 | `sync_pending` with no `data` | Pre-write pull failed; no local write occurred                     | Retry with the same request ID after Sync recovers                                                          |
 | `sync_pending` with `data`    | The local write occurred, but the push was not confirmed           | Do not issue a new mutation blindly; inspect status and read the file, then verify from another Sync client |
 
-The Durable Object records the complete response for each mutation UUID. A repeated identical request returns that response even if continuous Sync later converges. This prevents an ambiguous retry from applying a write twice.
+The Durable Object records the complete response for each mutation UUID. A repeated identical request returns that response even if a later scheduled one-shot converges. This prevents an ambiguous retry from applying a write twice.
 
 `git_state` is independent from `sync_state`. A successful Obsidian mutation remains successful when Git is pending. When a local mutation exists but its Obsidian push is pending, the server attempts an emergency Git commit so the data has a second durable copy without claiming full convergence.
 
@@ -30,11 +30,11 @@ The Durable Object records the complete response for each mutation UUID. A repea
 
 Before a live one-shot, the Container refreshes a separate `mirror-remote` vault, checkpoints the complete live tree, and compares the mirror with the last accepted remote snapshot. After the one-shot it compares the live result with both the checkpoint and the predicted remote delta. Reconciliation performs the same checks before and after applying its candidate.
 
-The server quarantines when a nonempty vault would become empty, at least half of tracked paths or one quarter of tracked bytes would be deleted, at least 20 paths and 10% of paths would be deleted, or Headless reports an unplanned remote deletion. The exact path list is kept in a protected admin manifest; logs and ordinary status retain only counts, hashes, and a capped preview.
+The server considers a candidate destructive when a nonempty vault would become empty, at least half of tracked paths or one quarter of tracked bytes would be deleted, at least 20 paths and 10% of paths would be deleted, or Headless reports an unplanned remote deletion. During the automatic minute safety pass, a first observation is restored and held in a read-only `verifying` state. Scheduled quarantine requires an identical second observation with the same phase, trees, Sync version/digest, counts, reasons, and complete deletion manifest. A clean or changed second observation clears or supersedes the first. The last 20 observation outcomes and capped path previews are retained in runtime status so refresh cannot erase the original incident. Explicit Git previews, approvals, and MCP mutations retain their fail-closed single-operation guards.
 
 While quarantined:
 
-- Continuous Sync and all Git triggers remain stopped, including after restart.
+- Scheduled Sync and all Git triggers remain stopped, including after restart.
 - MCP reads continue from the restored checkpoint and existing index.
 - MCP mutations return `not_ready`.
 - The Git base is unchanged and no destructive content commit is pushed.
@@ -49,7 +49,7 @@ Obsidian Sync is synchronization, not the only backup. Keep an independent versi
 Recovery paths:
 
 - Container replacement: automatic rehydrate from the encrypted DO envelope and Obsidian Sync.
-- Continuous process exit: supervised restart with exponential backoff capped at 60 seconds; status reports the exit and attempt count.
+- Scheduled Sync failure: status remains `verifying` or becomes `degraded`; inspect the retained observation history and retry only after the remote vault is stable.
 - `degraded` after bootstrap: inspect Container/Worker logs, verify vault size and E2E password, then use `/admin` reset and bootstrap again if needed.
 - Lost or rotated credential key: reset and re-enter Obsidian credentials. The old encrypted envelope cannot be recovered without the old key.
 - Obsidian token revocation: reset, log in again, and review active sessions in the Obsidian account.
@@ -73,7 +73,7 @@ The runtime requires the `basic` tier and refuses reconciliation unless the live
 - Exercise concurrent edits from desktop and MCP and decide on an operational conflict policy.
 - Verify independent backups and deletion recovery.
 - Set Cloudflare budget alerts and log retention.
-- Monitor `vault_status` for `degraded`, `sync_pending`, `destructive_change`, continuous exits, queue growth, and unexpected file-count changes.
+- Monitor `vault_status` for `verifying`, `degraded`, `sync_pending`, `destructive_change`, queue growth, and unexpected file-count changes.
 - Monitor Git status for paused/quarantined mode, pending retries, LFS failures, conflicts, and `history_rewritten`. The server never force-pushes and requires an administrator to approve initial candidates and resolve rewritten history.
 - Treat the Git repository as sensitive plaintext. Obsidian Sync end-to-end encryption does not extend to GitHub, and `.obsidian` plugin data may contain secrets.
 - Re-run the full image build, tests, and bootstrap smoke test before changing the pinned Headless package.

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
   lstat,
   mkdir,
@@ -323,10 +323,6 @@ export function syncConfigArgs(
 }
 
 export class SyncSupervisor {
-  private continuous: ChildProcess | null = null;
-  private continuousDesired = false;
-  private restartTimer: NodeJS.Timeout | null = null;
-  private restartAttempts = 0;
   private authToken: string | null = null;
   private connection: {
     token: string;
@@ -336,10 +332,6 @@ export class SyncSupervisor {
   private lastSyncAt: string | null = null;
   private lastSyncError: string | null = null;
   private lastSyncSummary: ReturnType<typeof summarizeSyncRun> | null = null;
-  private continuousExit: {
-    code: number | null;
-    signal: NodeJS.Signals | null;
-  } | null = null;
 
   constructor(
     private readonly vaultRoot: string,
@@ -592,7 +584,6 @@ export class SyncSupervisor {
 
   async reinitializeStateAndRepublish(): Promise<SyncRunObservation> {
     if (!this.authToken) throw new Error("Obsidian Sync is not configured");
-    await this.stopContinuous();
     const status = JSON.parse(
       (
         await runCommand(
@@ -629,80 +620,6 @@ export class SyncSupervisor {
     return this.oneShot();
   }
 
-  startContinuous(): void {
-    this.continuousDesired = true;
-    if (this.continuous || this.restartTimer) return;
-    const child = spawn(
-      HEADLESS_COMMAND,
-      ["sync", "--path", this.vaultRoot, "--continuous"],
-      {
-        env: safeEnvironment(this.commandEnvironment()),
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-    child.stdout.resume();
-    child.stderr.resume();
-    let handled = false;
-    const stopped = (
-      code: number | null,
-      signal: NodeJS.Signals | null,
-      error?: Error,
-    ) => {
-      if (handled) return;
-      handled = true;
-      this.continuousExit = { code, signal };
-      if (this.continuous === child) this.continuous = null;
-      if (error) this.lastSyncError = error.message;
-      else if (code !== 0)
-        this.lastSyncError = `Continuous sync exited (${code ?? signal ?? "unknown"})`;
-      if (this.continuousDesired) this.scheduleRestart();
-    };
-    child.once("exit", (code, signal) => stopped(code, signal));
-    child.once("error", (error) => stopped(null, null, error));
-    this.continuous = child;
-    this.continuousExit = null;
-  }
-
-  private scheduleRestart(): void {
-    if (this.restartTimer || !this.continuousDesired) return;
-    const delay = Math.min(
-      60_000,
-      1_000 * 2 ** Math.min(this.restartAttempts, 6),
-    );
-    this.restartAttempts += 1;
-    this.restartTimer = setTimeout(() => {
-      this.restartTimer = null;
-      if (this.continuousDesired) this.startContinuous();
-    }, delay);
-    this.restartTimer.unref();
-  }
-
-  async stopContinuous(): Promise<void> {
-    this.continuousDesired = false;
-    if (this.restartTimer) clearTimeout(this.restartTimer);
-    this.restartTimer = null;
-    this.restartAttempts = 0;
-    const child = this.continuous;
-    if (!child) return;
-    this.continuous = null;
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    await new Promise<void>((resolve) => {
-      let resolved = false;
-      const finish = () => {
-        if (resolved) return;
-        resolved = true;
-        clearTimeout(forceTimer);
-        resolve();
-      };
-      const forceTimer = setTimeout(() => {
-        child.kill("SIGKILL");
-        finish();
-      }, 10_000);
-      child.once("exit", finish);
-      child.kill("SIGTERM");
-    });
-  }
-
   async status(): Promise<unknown> {
     let cliStatus: unknown = null;
     let stateDatabase: unknown = { available: false };
@@ -729,10 +646,7 @@ export class SyncSupervisor {
       }
     }
     return {
-      continuous: this.continuous !== null,
-      continuousDesired: this.continuousDesired,
-      restartAttempts: this.restartAttempts,
-      continuousExit: this.continuousExit,
+      driver: "scheduled_one_shot",
       lastSyncAt: this.lastSyncAt,
       lastSyncError: this.lastSyncError,
       lastSyncSummary: this.lastSyncSummary,

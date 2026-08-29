@@ -89,11 +89,19 @@ export type AdminView = {
 };
 
 export function adminPage(view: AdminView): Response {
+  const runtime =
+    view.status && typeof view.status === "object"
+      ? (view.status as { runtime?: { state?: unknown } }).runtime
+      : undefined;
+  const verifying = runtime?.state === "verifying";
   const feedback = view.error
     ? `<p class="error">${escapeHtml(view.error)}</p>`
     : view.message
       ? `<p class="notice">${escapeHtml(view.message)}</p>`
       : "";
+  const verificationNotice = verifying
+    ? `<p class="notice">A destructive-looking Sync observation is being rechecked independently. Vault writes and Git reconciliation remain paused until the next scheduled pass confirms or clears it.</p>`
+    : "";
   const vaultOptions = (view.remoteVaults ?? [])
     .map((vault) => {
       const value = vault.id ?? vault.name ?? "";
@@ -114,8 +122,9 @@ export function adminPage(view: AdminView): Response {
         const eventControls = event
           ? `<section><h3>Reconciliation safety review</h3><p>Phase: <code>${escapeHtml(event.phase)}</code><br>Files: ${event.previous_files} → ${event.candidate_files}<br>Proposed deletions: ${event.deleted_files} files / ${event.deleted_bytes} bytes<br>Reasons: ${escapeHtml(event.reasons.join(", "))}</p><pre>${escapeHtml(event.paths.join("\n"))}</pre>${view.git?.mode === "quarantined" && event.path_count > event.paths.length ? `<p><a href="/admin/github/safety-manifest?event_id=${encodeURIComponent(event.event_id)}">Download the complete manifest</a></p>` : ""}<form method="post" action="/admin/github/safety"><input type="hidden" name="csrf" value="${escapeHtml(view.csrf)}"><input type="hidden" name="event_id" value="${escapeHtml(event.event_id)}"><button name="action" value="approve" type="submit">Approve this exact candidate</button>${view.git?.mode === "quarantined" ? `<button name="action" value="reject" type="submit">Reject and republish safe vault</button>` : ""}</form>${view.git?.mode === "quarantined" ? `<form method="post" action="/admin/github/safety-refresh"><input type="hidden" name="csrf" value="${escapeHtml(view.csrf)}"><input type="hidden" name="event_id" value="${escapeHtml(event.event_id)}"><button type="submit">Refresh this preview</button></form>` : ""}</section>`
           : "";
-        const activeControls =
-          view.git?.mode === "active"
+        const activeControls = verifying
+          ? ""
+          : view.git?.mode === "active"
             ? `<form method="post" action="/admin/github/reconcile"><input type="hidden" name="csrf" value="${escapeHtml(view.csrf)}"><button type="submit">Reconcile now</button></form>`
             : view.git?.mode === "paused" && view.git.baseCommit && !event
               ? `<form method="post" action="/admin/github/reconcile"><input type="hidden" name="csrf" value="${escapeHtml(view.csrf)}"><button type="submit">Run manual reconciliation</button></form><form method="post" action="/admin/github/enable"><input type="hidden" name="csrf" value="${escapeHtml(view.csrf)}"><button type="submit">Enable one-minute schedule</button></form>`
@@ -129,7 +138,7 @@ export function adminPage(view: AdminView): Response {
       : `<h2>GitHub backup and reconciliation</h2><p>Connect a separately authorized GitHub App and select its repository.</p><p><a href="/admin/github/connect">Connect GitHub</a></p>`;
   return page(
     "Vault administration",
-    `<h1>Vault administration</h1><p>Signed in through Cloudflare Access as ${escapeHtml(view.email)}.</p>${feedback}${setup}${git}`,
+    `<h1>Vault administration</h1><p>Signed in through Cloudflare Access as ${escapeHtml(view.email)}.</p>${feedback}${verificationNotice}${setup}${git}`,
   );
 }
 
